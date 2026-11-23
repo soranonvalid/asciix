@@ -1,0 +1,757 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ASCII Print Studio</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, system-ui, sans-serif;
+      color: #28241d;
+      background: #f6f2e9;
+      --line: #d3c9b7;
+      --muted: #62594c;
+      --paper: #fffdf6;
+      --ink: #26231d;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header, main { max-width: 1440px; margin-inline: auto; }
+    header {
+      min-height: 122px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 18px;
+      padding: 24px 34px;
+      border-bottom: 1px solid var(--line);
+    }
+    h1 {
+      margin: 0;
+      font: 400 clamp(2.2rem, 5vw, 4rem)/0.98 "Instrument Serif", Georgia, serif;
+      letter-spacing: -0.055em;
+    }
+    .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    button {
+      padding: 10px 16px;
+      min-height: 42px;
+      border: 1px solid var(--ink);
+      background: var(--paper);
+      color: var(--ink);
+      font: inherit;
+      font-size: 0.88rem;
+      cursor: pointer;
+    }
+    .actions button:last-of-type { background: var(--ink); color: var(--paper); }
+    button:enabled:hover { text-decoration: underline; text-underline-offset: 3px; }
+    button:disabled { opacity: 0.45; cursor: default; }
+    :focus-visible { outline: 2px solid #28617a; outline-offset: 3px; }
+    main { display: grid; grid-template-columns: minmax(235px, 312px) minmax(0, 1fr); }
+    aside { padding: 22px 24px 30px 34px; border-right: 1px solid var(--line); }
+    aside > * + * { margin-top: 15px; }
+    h2, .caption, .credit, #status { font: 0.76rem/1.4 "IBM Plex Mono", Consolas, monospace; }
+    h2 { margin: 0; font-weight: 650; }
+    .field { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
+    .field label { font-size: 0.86rem; font-weight: 600; }
+    .field output { font: 0.77rem/1 "IBM Plex Mono", Consolas, monospace; color: var(--muted); }
+    select, input[type="range"], input[type="color"], input[type="text"] { grid-column: 1 / -1; width: 100%; }
+    select, input[type="text"], input[type="number"] {
+      min-height: 37px;
+      padding: 5px 8px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      color: var(--ink);
+      font: inherit;
+      font-size: 0.82rem;
+    }
+    .field input[type="number"] { width: 62px; min-height: 30px; padding: 3px 6px; }
+    input[type="text"] { font-family: "IBM Plex Mono", Consolas, monospace; }
+    input[type="range"] { margin: 0; accent-color: #332b20; }
+    input[type="color"] { min-height: 34px; background: var(--paper); border: 1px solid var(--line); }
+    input[type="checkbox"] { margin: 0; width: 16px; height: 16px; accent-color: var(--ink); }
+    .toggle { display: flex; align-items: center; gap: 8px; min-height: 28px; font-size: 0.83rem; cursor: pointer; }
+    .quick { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 10px; padding-block: 5px; }
+    .quick .toggle:last-child { grid-column: 1 / -1; }
+    .section-nav { display: flex; flex-wrap: wrap; gap: 5px; padding-block: 9px; border-block: 1px solid var(--line); }
+    .section-nav button { min-height: 32px; padding: 5px 9px; border-color: var(--line); font-size: 0.73rem; }
+    .section-nav button[aria-pressed="true"] { color: var(--paper); background: var(--ink); border-color: var(--ink); }
+    .group-body { display: grid; gap: 14px; padding: 4px 0 16px; }
+    .key-help, .glyph-help { margin: 0; font-size: 0.72rem; line-height: 1.45; color: var(--muted); }
+    .quiet { min-height: 28px; padding: 0; border: 0; background: transparent; text-align: left; font-size: 0.73rem; text-decoration: underline; text-underline-offset: 3px; }
+    .quiet:enabled:hover { color: #775334; }
+    .key-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .key-fields label { display: grid; gap: 4px; color: var(--muted); font-size: 0.66rem; }
+    .key-fields input { min-height: 31px; padding: 4px; text-align: center; }
+    #custom-colors { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 12px; }
+    .swatch { display: grid; gap: 6px; }
+    .swatch .field label { font-size: 0.74rem; }
+    .palette-tools { display: grid; gap: 12px; }
+    .palette-swatches { display: grid; gap: 8px; }
+    .palette-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) 75px; gap: 4px 7px; align-items: center; }
+    .palette-row input[type="text"] { grid-column: auto; min-width: 0; min-height: 30px; padding: 4px; font-size: 0.73rem; }
+    .palette-row .toggle { grid-column: 2 / -1; min-height: 22px; font-size: 0.72rem; }
+    .palette-chip { width: 26px; height: 26px; border: 1px solid var(--line); }
+    .rules-grid { display: grid; grid-template-columns: 52px repeat(3, minmax(0, 1fr)); gap: 5px; align-items: center; font-size: 0.68rem; }
+    .rules-grid select { grid-column: auto; min-height: 30px; min-width: 0; font-size: 0.7rem; padding: 3px; }
+    .advanced { padding: 6px 0; border-top: 1px solid var(--line); }
+    .advanced summary { cursor: pointer; font-size: 0.82rem; font-weight: 650; }
+    [hidden] { display: none !important; }
+    #status { color: var(--muted); margin-bottom: 0; }
+    #status[data-error] { color: #9a2932; }
+    .workspace { min-width: 0; padding: 22px 34px 32px 26px; }
+    .boards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    figure { margin: 0; min-width: 0; }
+    figcaption {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      padding-bottom: 9px;
+    }
+    .caption { color: var(--muted); }
+    .image {
+      min-height: 2px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: repeating-conic-gradient(#ece5d8 0% 25%, var(--paper) 0% 50%) 0 / 18px 18px;
+    }
+    canvas { display: block; width: 100%; height: auto; }
+    .credit { display: inline-block; margin: 14px 0 0; color: var(--muted); text-underline-offset: 2px; }
+    @media (min-width: 851px) {
+      .workspace { position: sticky; top: 0; align-self: start; }
+    }
+    @media (max-width: 850px) {
+      header { min-height: 96px; padding-inline: 20px; }
+      main { grid-template-columns: minmax(190px, 238px) minmax(0, 1fr); }
+      aside { padding-inline: 20px; }
+      .workspace { padding-inline: 20px; }
+      .boards { grid-template-columns: 1fr; }
+      #result-figure { grid-row: 1; }
+    }
+    @media (max-width: 530px) {
+      main { display: flex; flex-direction: column; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      .workspace { padding-top: 18px; }
+      .quick { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .quick .toggle:last-child { grid-column: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ASCII Print Studio</h1>
+    <div class="actions">
+      <input id="file" type="file" accept="image/*" hidden>
+      <button id="open" type="button" disabled>Open image</button>
+      <button id="export" type="button" disabled>Export PNG</button>
+    </div>
+  </header>
+  <main>
+    <aside aria-label="Shader controls">
+      <div class="field">
+        <label for="sample">Sample image</label>
+        <select id="sample" disabled>
+          <option value="portrait">Portrait</option>
+          <option value="icon">Transparent icon</option>
+          <option value="ramp">Grayscale ramp</option>
+          <option value="custom" hidden>Your image</option>
+        </select>
+      </div>
+      <div id="look"></div>
+      <div id="quick" class="quick"></div>
+      <nav id="group-menu" class="section-nav" aria-label="Control groups">
+        <button id="group-characters" type="button" aria-controls="characters" aria-pressed="true">Characters</button>
+        <button id="group-grid-marks" type="button" aria-controls="grid-marks" aria-pressed="false">Grid &amp; marks</button>
+        <button id="group-image-treatment" type="button" aria-controls="image-treatment" aria-pressed="false">Image</button>
+        <button id="group-color-controls" type="button" aria-controls="color-controls" aria-pressed="false">Color &amp; alpha</button>
+        <button id="group-print-finish" type="button" aria-controls="print-finish" aria-pressed="false">Print finish</button>
+        <button id="group-label-controls" type="button" aria-controls="label-controls" aria-pressed="false">Label</button>
+      </nav>
+      <section id="characters" class="group-body" aria-labelledby="group-characters"></section>
+      <section id="grid-marks" class="group-body" aria-labelledby="group-grid-marks" hidden></section>
+      <section id="image-treatment" class="group-body" aria-labelledby="group-image-treatment" hidden></section>
+      <section id="color-controls" class="group-body" aria-labelledby="group-color-controls" hidden></section>
+      <section id="print-finish" class="group-body" aria-labelledby="group-print-finish" hidden></section>
+      <section id="label-controls" class="group-body" aria-labelledby="group-label-controls" hidden></section>
+      <button id="reset" class="quiet" type="button" disabled>Reset settings</button>
+      <p id="status" role="status">Starting WebGPU…</p>
+    </aside>
+    <section class="workspace" aria-label="Image preview">
+      <div class="boards">
+        <figure>
+          <figcaption><h2>Source</h2><span id="dimensions" class="caption"></span></figcaption>
+          <div class="image"><canvas id="source" width="576" height="656" aria-label="Source image"></canvas></div>
+        </figure>
+        <figure id="result-figure">
+          <figcaption><h2>Shader result</h2><span id="current-style" class="caption"></span></figcaption>
+          <div class="image"><canvas id="result" width="576" height="656" aria-label="Image rendered with the ASCII shader"></canvas></div>
+        </figure>
+      </div>
+      <a id="credit" class="credit" href="https://www.nasa.gov/humans-in-space/astronauts/former-astronauts/#:~:text=Ride%2C%20Sally%20K." target="_blank" rel="noopener">Sample portrait of Sally Ride courtesy of NASA</a>
+    </section>
+  </main>
+  <script type="module">
+    let properties;
+    function defineProperties(_component, definitions) { properties = definitions; }
+/*__SHADER__*/
+
+    const samples = {
+      portrait: "data:image/jpeg;base64,__PORTRAIT__",
+      icon: "data:image/png;base64,__ICON__",
+      ramp: "data:image/png;base64,__RAMP__",
+    };
+    const get = (id) => document.getElementById(id);
+    const sourceCanvas = get("source");
+    const resultCanvas = get("result");
+    const before = sourceCanvas.getContext("2d");
+    const state = {};
+    const defaults = Object.fromEntries(Object.entries(properties).map(([key, spec]) => [key, spec.defaultValue]));
+    const settings = { ...defaults };
+    const fields = {};
+    const edgeFields = [];
+    const controlInputs = [];
+    let input;
+    let device;
+    let after;
+    let sourceName = "portrait";
+    let pendingDraw = 0;
+    let loadNumber = 0;
+    let canRender = false;
+
+    function status(message, error = false) {
+      get("status").textContent = message;
+      get("status").toggleAttribute("data-error", error);
+    }
+
+    function paint() {
+      if (!input || !canRender) return;
+      // Match the backing grid to the displayed pixels to avoid a second downsampling pass.
+      const displayWidth = Math.round(resultCanvas.parentElement.clientWidth * devicePixelRatio);
+      const width = Math.min(input.width, Math.max(1, displayWidth));
+      const height = Math.max(1, Math.round(input.height * width / input.width));
+      if (resultCanvas.width !== width) resultCanvas.width = width;
+      if (resultCanvas.height !== height) resultCanvas.height = height;
+      render(device, { input, output: after.getCurrentTexture(), state, params: settings });
+      get("current-style").textContent = get("style").selectedOptions[0].textContent;
+      refreshPalette();
+    }
+
+    function scheduleDraw() {
+      if (pendingDraw) return;
+      pendingDraw = requestAnimationFrame(() => {
+        pendingDraw = 0;
+        paint();
+      });
+    }
+
+    async function loadImage(src, name, isPortrait = false) {
+      const request = ++loadNumber;
+      let bitmap;
+      try {
+        const blob = src instanceof Blob ? src : await (await fetch(src)).blob();
+        bitmap = await createImageBitmap(blob);
+        if (request !== loadNumber) return false;
+        const maxSide = Math.min(device.limits.maxTextureDimension2D, 4096);
+        const factor = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+        const width = Math.max(1, Math.round(bitmap.width * factor));
+        const height = Math.max(1, Math.round(bitmap.height * factor));
+        if (factor < 1) {
+          const fullSize = bitmap;
+          bitmap = await createImageBitmap(fullSize, { resizeWidth: width, resizeHeight: height, resizeQuality: "high" });
+          fullSize.close();
+          if (request !== loadNumber) return false;
+        }
+        const next = device.createTexture({
+          size: { width, height },
+          format: "rgba8unorm",
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+        device.queue.copyExternalImageToTexture({ source: bitmap }, { texture: next, premultipliedAlpha: true }, { width, height });
+        input?.destroy();
+        input = next;
+        sourceCanvas.width = width;
+        sourceCanvas.height = height;
+        before.drawImage(bitmap, 0, 0);
+        sourceName = name;
+        get("credit").hidden = !isPortrait;
+        get("dimensions").textContent = `${width} × ${height}`;
+        get("export").disabled = false;
+        paint();
+        status(factor < 1 ? "Preview resized to fit 4096 px." : "Ready");
+        return true;
+      } catch (error) {
+        if (request === loadNumber) status(error.message || "Could not read that image.", true);
+        return false;
+      } finally {
+        bitmap?.close();
+      }
+    }
+
+    function element(tag, props, ...children) {
+      const node = Object.assign(document.createElement(tag), props);
+      node.append(...children);
+      return node;
+    }
+
+    function addFields(container, keys) {
+      for (const key of keys) {
+        const spec = properties[key];
+        const label = element("label", { htmlFor: key, textContent: spec.label });
+        let field;
+        let control;
+        let output;
+        if (spec.type === "boolean") {
+          control = element("input", { id: key, type: "checkbox", disabled: true });
+          field = element("label", { className: "toggle" }, control, spec.label);
+        } else if (spec.type === "string") {
+          control = element("input", { id: key, type: "text", maxLength: 128, spellcheck: false, disabled: true });
+          field = element("div", { className: "field" }, label, control);
+        } else if (spec.control === "select") {
+          control = element("select", { id: key, disabled: true }, ...spec.options.map((option) => new Option(option.label, option.value)));
+          field = element("div", { className: "field" }, label, control);
+        } else {
+          control = element("input", { id: key, type: "range", min: spec.min, max: spec.max, step: spec.step, disabled: true });
+          output = element("output", { id: key + "-value", htmlFor: key });
+          field = element("div", { className: "field" }, label, output, control);
+        }
+        control.addEventListener(control.tagName === "SELECT" || spec.type === "boolean" ? "change" : "input", () => {
+          if (spec.type === "boolean") settings[key] = control.checked;
+          else if (spec.type === "string") settings[key] = control.value;
+          else settings[key] = Number(control.value);
+          controlsChanged();
+        });
+        fields[key] = { field, control, output };
+        container.append(field);
+        controlInputs.push(control);
+      }
+    }
+
+    addFields(get("look"), ["style"]);
+    addFields(get("quick"), ["invertImage", "invertColors", "transparentPaper"]);
+    fields.invertImage.field.title = "Invert pixels before choosing marks.";
+    fields.invertColors.field.title = "Invert the rendered inks and paper.";
+    fields.transparentPaper.field.title = "Remove paper. Existing image transparency is preserved.";
+
+    const characterGroup = get("characters");
+    addFields(characterGroup, ["glyphs"]);
+    const glyphHelp = element("p", { id: "glyph-help", className: "glyph-help" });
+    const editStarter = element("button", { id: "edit-starter", className: "quiet", type: "button", textContent: "Edit starter set", disabled: true });
+    editStarter.addEventListener("click", () => {
+      settings.glyphs = state.starterGlyphs[settings.style];
+      controlsChanged();
+      get("glyphs").select();
+    });
+    controlInputs.push(editStarter);
+    fields.glyphs.control.setAttribute("aria-describedby", glyphHelp.id);
+    fields.glyphs.field.append(editStarter);
+    characterGroup.append(glyphHelp);
+    addFields(characterGroup, ["glyphOrder"]);
+    const edgeGroup = element("div", { className: "key-fields" });
+    const edgeHelp = element("p", { id: "edge-help", className: "key-help", textContent: "Blank slots inherit the look. Enter a space to hide that direction." });
+    for (const [index, [label, mark]] of [
+      ["Horizontal", "–"], ["Vertical", "|"], ["Rising", "/"], ["Falling", "\\"], ["Turn left", "("], ["Turn right", ")"],
+    ].entries()) {
+      const control = element("input", { id: "edge-" + index, type: "text", placeholder: mark, maxLength: 1, spellcheck: false, disabled: true });
+      control.setAttribute("aria-describedby", edgeHelp.id);
+      control.addEventListener("input", () => {
+        settings.edgeGlyphs = edgeFields.some((field) => field.value.length)
+          ? edgeFields.map((field) => field.value || "–").join("")
+          : "";
+        controlsChanged();
+      });
+      edgeGroup.append(element("label", { htmlFor: control.id }, label, control));
+      edgeFields.push(control);
+      controlInputs.push(control);
+    }
+    const edgeSet = element("div", { className: "group-body" },
+      element("h2", { textContent: "Edge characters" }), edgeGroup, edgeHelp);
+    characterGroup.append(edgeSet);
+    addFields(characterGroup, ["response", "toneCutoff"]);
+    const characterBanks = element("div", { className: "group-body" });
+    addFields(characterBanks, ["lightGlyphs", "middleGlyphs", "heavyGlyphs", "bandLight", "bandHeavy"]);
+    for (const key of ["lightGlyphs", "middleGlyphs", "heavyGlyphs"]) {
+      fields[key].control.maxLength = 64;
+      fields[key].control.placeholder = "Use the main character set";
+    }
+    characterGroup.append(element("details", { className: "advanced" },
+      element("summary", { textContent: "Characters by tone" }), characterBanks));
+    addFields(get("grid-marks"), [
+      "columns", "cellAspect", "glyphSize", "glyphWeight", "density",
+      "contour", "edgeThreshold", "joinStrokes", "dots", "blocks", "mixByTone",
+    ]);
+    const { min: minColumns, max: maxColumns, step: columnStep } = properties.columns;
+    const columnCount = element("input", {
+      type: "number", id: "column-count", min: minColumns, max: maxColumns, step: columnStep, disabled: true,
+    });
+    columnCount.setAttribute("aria-label", "Exact column count");
+    fields.columns.output.replaceWith(columnCount);
+    fields.columns.output = null;
+    controlInputs.push(columnCount);
+    columnCount.addEventListener("change", () => {
+      const value = columnCount.valueAsNumber;
+      if (Number.isFinite(value)) settings.columns = Math.max(minColumns, Math.min(maxColumns, Math.round(value)));
+      controlsChanged();
+    });
+    const bandFields = element("div", { className: "group-body" });
+    addFields(bandFields, ["lightDots", "lightBlocks", "middleDots", "middleBlocks", "heavyDots", "heavyBlocks"]);
+    get("grid-marks").append(bandFields);
+    const shapes = element("div", { className: "group-body" });
+    addFields(shapes, ["runLength", "lineBreaks", "outlinePriority", "interiorDetail",
+      "blockThreshold", "dotGrid", "dotSize", "dotAlignment"]);
+    get("grid-marks").append(element("details", { className: "advanced" },
+      element("summary", { textContent: "Contour and cell shapes" }), shapes));
+    addFields(get("image-treatment"), [
+      "brightness", "contrast", "midtones", "levels", "detail", "detailAmount", "warp", "warpAmount",
+    ]);
+    addFields(get("color-controls"), ["palette", "polarity", "colorMix"]);
+    const colors = element("div", { id: "custom-colors", hidden: true });
+    const colorFields = {};
+    get("color-controls").append(colors);
+    for (const key of ["ink", "accentOne", "accentTwo", "paper", "labelColor", "labelBacking"]) {
+      const selected = element("input", { id: key, type: "color", disabled: true });
+      const label = element("label", { htmlFor: key, textContent: properties[key].label });
+      const opacity = element("input", { id: key + "-opacity", type: "range", min: 0, max: 100, step: 1, disabled: true });
+      const value = element("output", { htmlFor: opacity.id });
+      const swatch = element("div", { className: "swatch" },
+        element("div", { className: "field" }, label, selected),
+        element("div", { className: "field" }, element("label", { htmlFor: opacity.id, textContent: "Opacity" }), value, opacity));
+      opacity.setAttribute("aria-label", properties[key].label + " opacity");
+      function setColor() {
+        const [r, g, b] = selected.value.slice(1).match(/../g).map((pair) => Number.parseInt(pair, 16) / 255);
+        settings[key] = { r, g, b, a: Number(opacity.value) / 100 };
+        controlsChanged();
+      }
+      selected.addEventListener("input", setColor);
+      opacity.addEventListener("input", setColor);
+      colorFields[key] = { selected, opacity, label, value, swatch };
+      (key.startsWith("label") ? get("label-controls") : colors).append(swatch);
+      controlInputs.push(selected, opacity);
+    }
+    addFields(get("color-controls"), ["sourceKey", "keyThreshold", "keySoftness"]);
+    addFields(get("print-finish"), ["texture", "registration", "dither", "seed"]);
+    const labelGroup = get("label-controls");
+    addFields(labelGroup, ["labelText", "labelX", "labelY", "labelSize", "labelAlign"]);
+    labelGroup.prepend(fields.labelText.field);
+    fields.labelText.control.maxLength = 96;
+    fields.labelText.control.placeholder = "Type a caption or specimen name";
+    const labelSwatch = element("select", { id: "caption-swatch", disabled: true });
+    const labelSwatchField = element("div", { className: "field" },
+      element("label", { htmlFor: labelSwatch.id, textContent: "Label ink source" }), labelSwatch);
+    labelGroup.append(labelSwatchField);
+    controlInputs.push(labelSwatch);
+    labelSwatch.addEventListener("change", () => {
+      settings.labelSwatch = Number(labelSwatch.value);
+      controlsChanged();
+    });
+
+    const paletteTools = element("div", { className: "palette-tools" });
+    const swatchList = element("div", { className: "palette-swatches" });
+    const ruleGrid = element("div", { className: "rules-grid" });
+    addFields(paletteTools, ["swatchCount", "gradedPalette", "excludeKeyed"]);
+    paletteTools.append(element("h2", { textContent: "Extracted inks" }), swatchList,
+      element("h2", { textContent: "Ink assignments" }), ruleGrid);
+    get("color-controls").insertBefore(paletteTools, fields.sourceKey.field);
+    const paletteRows = [];
+    const inkAssignments = [];
+    let extractedRGB = [];
+    let paletteReadInFlight = false;
+    let paletteRevision = 0;
+    const bands = ["Light", "Mid", "Heavy"];
+    const marks = ["Type", "Contour", "Block", "Dot"];
+    const activeSwatches = () => settings.palette === 8 ? 3 : settings.palette === 7 ? settings.swatchCount : 0;
+    const defaultSwatchName = (index) => settings.palette === 8 ? ["Dark ink", "Midtone ink", "Light ink"][index] : "Ink " + (index + 1);
+    const toHex = (color) => "#" + color.map((channel) => Math.round(channel * 255).toString(16).padStart(2, "0")).join("");
+    function swatchInfo() {
+      const lines = settings.swatches.split("\n");
+      return Array.from({ length: 8 }, (_, index) => {
+        const [name, hex] = (lines[index] ?? "").split("=");
+        return { name: name || defaultSwatchName(index), hex: hex || "", named: Boolean(name) };
+      });
+    }
+    function saveSwatch(index, name, hex) {
+      const lines = swatchInfo().map((swatch) => (swatch.named ? swatch.name : "") + "=" + swatch.hex);
+      lines[index] = name.replace(/[=\r\n]/g, "").slice(0, 36) + "=" + hex;
+      settings.swatches = lines.join("\n");
+      controlsChanged();
+    }
+    for (let index = 0; index < 8; index += 1) {
+      const name = element("input", { type: "text", maxLength: 36, disabled: true });
+      const hex = element("input", { type: "text", pattern: "#[0-9a-fA-F]{6}", maxLength: 7, disabled: true });
+      const lock = element("input", { type: "checkbox", disabled: true });
+      name.setAttribute("aria-label", "Name for swatch " + (index + 1));
+      hex.setAttribute("aria-label", "Hex value for swatch " + (index + 1));
+      lock.setAttribute("aria-label", "Lock swatch " + (index + 1));
+      const chip = element("span", { className: "palette-chip" });
+      const row = element("div", { className: "palette-row", id: "swatch-" + (index + 1) },
+        chip, name, hex, element("label", { className: "toggle" }, lock, "Lock ink"));
+      name.addEventListener("change", () => saveSwatch(index, name.value, swatchInfo()[index].hex));
+      hex.addEventListener("change", () => {
+        if (/^#[0-9a-f]{6}$/i.test(hex.value)) saveSwatch(index, name.value, hex.value.toLowerCase());
+        else hex.value = swatchInfo()[index].hex || (extractedRGB[index] ? toHex(extractedRGB[index]) : "");
+      });
+      lock.addEventListener("change", () => saveSwatch(index, name.value, lock.checked ? hex.value : ""));
+      controlInputs.push(name, hex, lock);
+      paletteRows.push({ row, chip, name, hex, lock });
+      swatchList.append(row);
+    }
+    ruleGrid.append(element("span", {}), ...bands.map((band) => element("span", { textContent: band })));
+    for (const [kind, mark] of marks.entries()) {
+      ruleGrid.append(element("span", { textContent: mark }));
+      for (const [band, tone] of bands.entries()) {
+        const id = kind * 3 + band;
+        const select = element("select", { id: "ink-assignment-" + id, disabled: true });
+        select.setAttribute("aria-label", tone + " " + mark.toLowerCase() + " ink");
+        select.addEventListener("change", () => {
+          const current = settings.inkRules.split(",");
+          const rules = Array.from({ length: 12 }, (_, slot) => slot === id ? select.value : current[slot] || "0");
+          settings.inkRules = rules.join(",");
+          controlsChanged();
+        });
+        ruleGrid.append(select);
+        inkAssignments.push(select);
+        controlInputs.push(select);
+      }
+    }
+
+    function syncPalettePanel() {
+      const count = activeSwatches();
+      paletteTools.hidden = count === 0;
+      fields.swatchCount.field.hidden = settings.palette !== 7;
+      labelSwatchField.hidden = count === 0;
+      const swatches = swatchInfo();
+      for (const [index, { row, chip, name, hex, lock }] of paletteRows.entries()) {
+        row.hidden = index >= count;
+        const swatch = swatches[index];
+        const color = swatch.hex || (extractedRGB[index] ? toHex(extractedRGB[index]) : "");
+        if (document.activeElement !== name) name.value = swatch.name;
+        if (document.activeElement !== hex) hex.value = color;
+        hex.placeholder = "Sampling";
+        chip.style.background = color;
+        lock.checked = Boolean(swatch.hex);
+      }
+      // Refresh option text only when names or the palette size change.
+      const signature = JSON.stringify(swatches.slice(0, count).map(({ name }) => name));
+      const rules = settings.inkRules.split(",");
+      for (const [index, select] of [...inkAssignments, labelSwatch].entries()) {
+        if (select.dataset.options !== signature) {
+          select.replaceChildren(new Option(index < 12 ? "Auto" : "Custom ink", "0"),
+            ...swatches.slice(0, count).map(({ name }, i) => new Option((i + 1) + " · " + name, String(i + 1))));
+          select.dataset.options = signature;
+        }
+        const value = index < 12 ? Number(rules[index] || 0) : settings.labelSwatch;
+        select.value = value <= count ? value : 0;
+      }
+    }
+
+    async function refreshPalette() {
+      paletteRevision += 1;
+      if (paletteReadInFlight) return;
+      paletteReadInFlight = true;
+      try {
+        let revision;
+        do {
+          revision = paletteRevision;
+          const count = activeSwatches();
+          if (!count) break;
+          const bytes = count * 32;
+          const buffer = device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+          try {
+            const encoder = device.createCommandEncoder();
+            encoder.copyBufferToBuffer(state.paletteResult, 0, buffer, 0, bytes);
+            device.queue.submit([encoder.finish()]);
+            await buffer.mapAsync(GPUMapMode.READ);
+            const data = new Float32Array(buffer.getMappedRange());
+            if (revision === paletteRevision) {
+              extractedRGB = Array.from({ length: count }, (_, index) => Array.from(data.subarray(index * 8 + 4, index * 8 + 7)));
+              syncPalettePanel();
+            }
+          } finally {
+            buffer.destroy();
+          }
+        } while (revision !== paletteRevision && canRender);
+      } catch (error) {
+        if (canRender) status(error.message || "Could not read the extracted inks.", true);
+      } finally {
+        paletteReadInFlight = false;
+      }
+    }
+
+    const groupButtons = get("group-menu").querySelectorAll("button");
+    for (const button of groupButtons) {
+      button.addEventListener("click", () => {
+        for (const group of groupButtons) {
+          const active = group === button;
+          group.setAttribute("aria-pressed", String(active));
+          get(group.getAttribute("aria-controls")).hidden = !active;
+        }
+      });
+    }
+
+    function syncControls() {
+      columnCount.valueAsNumber = settings.columns;
+      const starters = state.starterGlyphs;
+      const supported = Array.from(settings.glyphs, (character) => state.encodeGlyph?.(character));
+      const skipped = supported.filter((glyph) => glyph == null).length;
+      const useStarter = supported.length === skipped;
+      glyphHelp.textContent = skipped
+        ? skipped + " unsupported character" + (skipped === 1 ? " is" : "s are") + " skipped."
+        : "Printable ASCII, block symbols and Braille. Use a space for a blank cell.";
+      if (starters) get("glyphs").placeholder = starters[settings.style];
+      const edges = Array.from(settings.edgeGlyphs);
+      edgeFields.forEach((control, index) => {
+        const value = edges[index] && edges[index] !== "–" ? edges[index] : "";
+        if (control.value !== value) control.value = value;
+      });
+      for (const [key, { control, output }] of Object.entries(fields)) {
+        const value = settings[key];
+        if (properties[key].type === "boolean") control.checked = value;
+        else if (control.value !== String(value)) control.value = value;
+        if (!output) continue;
+        if (["seed", "runLength", "swatchCount"].includes(key)) output.textContent = value;
+        else if (key === "levels") output.textContent = value < 2 ? "Off" : value;
+        else if (key === "dots" && value < 0) output.textContent = "Look · " + (settings.style === 10 && useStarter ? "100%" : "0%");
+        else if (key === "blocks" && value < 0) output.textContent = "Look · " + (settings.style === 2 && useStarter ? "100%" : "0%");
+        else if (key === "registration" && value < 0) output.textContent = "Look default";
+        else if (key === "blockThreshold" && value < 0) output.textContent = "Look default";
+        else output.textContent = value + "%";
+      }
+      fields.detailAmount.field.hidden = settings.detail === 0;
+      fields.warpAmount.field.hidden = settings.warp === 0;
+      bandFields.hidden = settings.mixByTone !== 3;
+      fields.dots.field.hidden = fields.blocks.field.hidden = settings.mixByTone === 3;
+      fields.keyThreshold.field.hidden = fields.keySoftness.field.hidden = settings.sourceKey === 0;
+      fields.colorMix.field.hidden = !(settings.palette === 2 || settings.palette === 4 || settings.palette >= 7 ||
+        (settings.palette === 0 && (settings.style === 5 || settings.style === 9)));
+      colors.hidden = settings.palette === 0 || settings.palette === 3;
+      const showsAccents = settings.palette >= 4 && settings.palette <= 6;
+      colorFields.accentOne.swatch.hidden = colorFields.accentTwo.swatch.hidden = !showsAccents;
+      const colorRoles = {
+        2: ["Base tint", "Accent ink 1", "Accent ink 2"],
+        4: ["Base ink", "Spot ink 1", "Spot ink 2"],
+        5: ["Light tone", "Midtone", "Heavy tone"],
+        6: ["Tone ink", "Contour ink", "Block and dot ink"],
+      };
+      const roles = colorRoles[settings.palette] ?? ["Ink", "Accent ink 1", "Accent ink 2"];
+      for (const [index, [key, swatch]] of Object.entries(colorFields).entries()) {
+        const { r, g, b, a } = settings[key];
+        swatch.selected.value = "#" + [r, g, b].map((channel) => Math.round(channel * 255).toString(16).padStart(2, "0")).join("");
+        swatch.opacity.value = Math.round(a * 100);
+        swatch.value.textContent = swatch.opacity.value + "%";
+        swatch.label.textContent = key.startsWith("label") ? properties[key].label : roles[index] ?? "Paper";
+        swatch.opacity.setAttribute("aria-label", swatch.label.textContent + " opacity");
+      }
+      syncPalettePanel();
+    }
+
+    function controlsChanged() {
+      settings.bandLight = Math.min(settings.bandLight, settings.bandHeavy - 1);
+      syncControls();
+      scheduleDraw();
+    }
+
+    get("reset").addEventListener("click", () => {
+      Object.assign(settings, defaults);
+      controlsChanged();
+    });
+    syncControls();
+
+    get("sample").addEventListener("change", async ({ target }) => {
+      if (target.value !== "custom") {
+        const selected = target.value;
+        await loadImage(samples[selected], selected, selected === "portrait");
+      }
+    });
+    get("open").addEventListener("click", () => get("file").click());
+    get("file").addEventListener("change", async ({ target }) => {
+      const file = target.files[0];
+      if (file && await loadImage(file, file.name.replace(/\.[^.]+$/, ""))) get("sample").value = "custom";
+      target.value = "";
+    });
+
+    get("export").addEventListener("click", async () => {
+      const button = get("export");
+      button.disabled = true;
+      status("Preparing PNG…");
+      let output;
+      let buffer;
+      try {
+        const { width, height } = input;
+        const style = get("style").selectedOptions[0].textContent;
+        const name = `${sourceName} - ${style}.png`;
+        output = device.createTexture({
+          size: { width, height },
+          format: "rgba8unorm",
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+        });
+        render(device, { input, output, state, params: settings });
+        const rowSize = Math.ceil(width * 4 / 256) * 256;
+        buffer = device.createBuffer({ size: rowSize * height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        const encoder = device.createCommandEncoder();
+        encoder.copyTextureToBuffer({ texture: output }, { buffer, bytesPerRow: rowSize }, { width, height });
+        device.queue.submit([encoder.finish()]);
+        await buffer.mapAsync(GPUMapMode.READ);
+        const rgba = new Uint8Array(buffer.getMappedRange());
+        const straight = new ImageData(width, height);
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const offset = y * rowSize + x * 4;
+            const index = (y * width + x) * 4;
+            const alpha = rgba[offset + 3];
+            if (alpha === 0) continue;
+            straight.data[index] = rgba[offset] * 255 / alpha;
+            straight.data[index + 1] = rgba[offset + 1] * 255 / alpha;
+            straight.data[index + 2] = rgba[offset + 2] * 255 / alpha;
+            straight.data[index + 3] = alpha;
+          }
+        }
+        buffer.unmap();
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").putImageData(straight, 0, 0);
+        const png = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+        if (!png) throw new Error("Could not encode the PNG.");
+        const url = URL.createObjectURL(png);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = name;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        status("PNG exported.");
+      } catch (error) {
+        status(error.message || "Could not export the PNG.", true);
+      } finally {
+        buffer?.destroy();
+        output?.destroy();
+        button.disabled = !input || !canRender;
+      }
+    });
+
+    try {
+      const adapter = await navigator.gpu?.requestAdapter();
+      if (!adapter) throw new Error("WebGPU is unavailable. Open the file in a browser that supports WebGPU.");
+      device = await adapter.requestDevice();
+      device.addEventListener("uncapturederror", ({ error }) => status(error.message, true));
+      device.lost.then(({ message }) => {
+        canRender = false;
+        for (const control of controlInputs) control.disabled = true;
+        get("open").disabled = get("sample").disabled = get("reset").disabled = get("export").disabled = true;
+        status(message || "The graphics device stopped. Reload the preview to try again.", true);
+      });
+      after = resultCanvas.getContext("webgpu");
+      after.configure({ device, format: navigator.gpu.getPreferredCanvasFormat(), alphaMode: "premultiplied" });
+      setup(device, { state });
+      canRender = true;
+      new ResizeObserver(scheduleDraw).observe(resultCanvas.parentElement);
+      for (const control of controlInputs) control.disabled = false;
+      get("open").disabled = get("sample").disabled = get("reset").disabled = false;
+      syncControls();
+      await loadImage(samples.portrait, "portrait", true);
+    } catch (error) {
+      status(error.message || "Could not start the preview.", true);
+    }
+  </script>
+</body>
+</html>
