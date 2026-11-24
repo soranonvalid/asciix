@@ -21,7 +21,7 @@ Both shader versions support editable glyph sets, contours, layered marks, extra
 1. Open the web studio or run it locally with the commands below. The Sally Ride portrait is ready to print. Click **Source** to see the photograph and **Preview** to see the rendered result.
 2. Under **Characters**, enter ` .:oO#@` in **Tone characters**. Keep the leading space. That little pocket of nothing gives highlights somewhere to go.
 3. Under **Grid & marks**, try **Columns** at **48**, then **120**. Watch what happens to the eyes. Fewer columns make every character carry more of the portrait.
-4. Pick **Transparent paper** to see the studio’s checkerboard. In **Export_pipe**, select PNG or WebP and a scale, then click **Export** to save the image with its alpha channel.
+4. Pick **Transparent paper** to see the marks against a dotted backdrop that adapts to the ink. In **Export_pipe**, select PNG or WebP and a scale, then click **Export** to save the image with its alpha channel.
 
 ## Run the studio
 

@@ -288,9 +288,19 @@ body[data-file-drag] .drop-hint {
 
 .artwork-panel { position: absolute; inset: 0; }
 
-.checkerboard,
-.view-area:has(#preview-panel[data-transparent-paper]:not([hidden])) {
+.checkerboard {
   background: repeating-conic-gradient(#282828 0% 25%, #202020 0% 50%) 0 0 / 14px 14px;
+}
+
+.view-area:has(#preview-panel:not([hidden])) {
+  --preview-surface: var(--stage);
+  background-color: var(--preview-surface);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--preview-surface) 76%, #888) 0.8px, transparent 1.25px);
+  background-size: 16px 16px;
+}
+
+.view-area:has(#preview-panel[data-transparent-paper]:not([hidden])) {
+  --preview-surface: var(--preview-backdrop, var(--stage));
 }
 
 canvas {

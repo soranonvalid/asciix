@@ -53,7 +53,9 @@ const get = (id) => document.getElementById(id);
 const sourceCanvas = get("source");
 const resultCanvas = get("result");
 const artwork = get("artwork");
-const navigation = createArtworkNavigation(get("view-area"), artwork, scheduleDraw);
+const viewArea = get("view-area");
+const previewPanel = get("preview-panel");
+const navigation = createArtworkNavigation(viewArea, artwork, scheduleDraw);
 const exportFormat = get("export-format");
 const exportScale = get("export-scale");
 const copyButton = get("copy");
@@ -82,6 +84,9 @@ let sourceName = "portrait";
 let activeSample = "portrait";
 let pendingDraw = 0;
 let previewDirty = false;
+let backdropTimer;
+let sampleBackdrop = false;
+let backdropSample;
 let motionDrawing = false;
 let motionStarted = 0;
 let nextMotionFrame = 0;
@@ -134,6 +139,43 @@ function motionAt(phase, params = settings) {
 
 const maxRasterSide = () => Math.min(device.limits.maxTextureDimension2D, 4096);
 
+function scheduleBackdropUpdate() {
+  clearTimeout(backdropTimer);
+  sampleBackdrop = false;
+  if (!previewPanel.hasAttribute("data-transparent-paper")) return;
+  backdropTimer = setTimeout(() => {
+    sampleBackdrop = true;
+    scheduleDraw();
+  }, 120);
+}
+
+function updatePreviewBackdrop() {
+  if (!backdropSample) {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 96;
+    backdropSample = canvas.getContext("2d", { willReadFrequently: true });
+  }
+  if (!backdropSample) return;
+  const { width, height } = backdropSample.canvas;
+  backdropSample.clearRect(0, 0, width, height);
+  backdropSample.drawImage(resultCanvas, 0, 0, width, height);
+  const { data } = backdropSample.getImageData(0, 0, width, height);
+  const linear = (byte) => {
+    const channel = byte / 255;
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  };
+  // Compare contrast against the two neutral backgrounds, weighted by visible ink.
+  const midpoint = (Math.log(linear(23) + 0.05) + Math.log(linear(244) + 0.05)) / 2;
+  let balance = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3];
+    if (alpha <= 8) continue;
+    const luminance = 0.2126 * linear(data[i]) + 0.7152 * linear(data[i + 1]) + 0.0722 * linear(data[i + 2]);
+    balance += alpha * (Math.log(luminance + 0.05) - midpoint);
+  }
+  viewArea.style.setProperty("--preview-backdrop", balance < 0 ? "#f4f4f4" : "#171717");
+}
+
 function paint(updatePalette = true) {
   if (!input || !canRender) return;
   const size = artwork.getBoundingClientRect();
@@ -148,11 +190,16 @@ function paint(updatePalette = true) {
   const start = performance.now();
   render(device, { input, output: after.getCurrentTexture(), state, params: renderParams(), motion: motionAt(previewPhase) });
   get("render-time").textContent = "// " + (performance.now() - start).toFixed(1) + " MS";
+  if (sampleBackdrop && !previewPanel.hidden) {
+    sampleBackdrop = false;
+    // Sample the current frame before WebGPU presents and releases it.
+    updatePreviewBackdrop();
+  }
   if (updatePalette) refreshPalette();
 }
 
 function previewVisible() {
-  return input && canRender && !document.hidden && !get("preview-panel").hidden;
+  return input && canRender && !document.hidden && !previewPanel.hidden;
 }
 
 function queuePreview() {
@@ -327,6 +374,7 @@ async function loadImage(src, name, sample = "custom") {
     if (exportScale.selectedOptions[0].disabled) exportScale.value = "1";
     exportScale.title = "Scales above " + limit + " pixels on the longest side are disabled";
     syncOutputControls();
+    scheduleBackdropUpdate();
     paint();
     const installedAnimation = animation;
     await device.queue.onSubmittedWorkDone();
@@ -788,10 +836,8 @@ function syncReadouts() {
   get("contour-readout").textContent = settings.contour + "%";
   get("dither-readout").textContent = settings.dither + "%";
   get("finish-readout").textContent = settings.texture + "%";
-  const preview = get("preview-panel");
-  preview.toggleAttribute("data-transparent-paper", settings.transparentPaper);
-  preview.classList.toggle("checkerboard", !settings.transparentPaper &&
-    settings.palette !== 0 && settings.palette !== 3 && settings.paper.a < 1);
+  previewPanel.toggleAttribute("data-transparent-paper", settings.transparentPaper ||
+    (settings.palette !== 0 && settings.palette !== 3 && settings.paper.a < 1));
   if (!state.starterGlyphs) return;
 
   const encode = settings.style === 0 ? state.encodeTypeGlyph : state.encodeGlyph;
@@ -895,6 +941,7 @@ function controlsChanged() {
   }
   wasAnimating = settings.animate;
   syncControls();
+  scheduleBackdropUpdate();
   syncOutputControls();
   scheduleDraw();
 }

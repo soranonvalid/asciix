@@ -15,7 +15,7 @@
 | Pocket-sized portrait | **Mixed ASCII** → **Columns** 48 → **Tone characters** ` .:oO#@` | Big, readable letters. Try 49 columns to see one step of difference. |
 | Pen drawing | **Fine Wire** → **Contour emphasis** 83% → **Stroke joins** Separated | Short strokes along the outline. Raise **Blank tone cutoff** to clear the page. |
 | Two-ink poster | **Print Collage** → **Palette** Custom ink and paper → ink `#172554`, paper `#FFD84D` → **Posterize levels** 4 | Four source tone levels printed in navy on yellow. |
-| Transparent sticker | Open the sample icon → enable **Transparent paper** → for a white source background, set **Remove source background** to **Bright areas** | The checkerboard shows through the gaps. The PNG carries real alpha. |
+| Transparent sticker | Open the sample icon → enable **Transparent paper** → for a white source background, set **Remove source background** to **Bright areas** | The dotted preview backdrop adjusts to the ink. The PNG carries real alpha. |
 | Dot-to-block gradient | Open the ramp → **Dot mix** 65% → **Block mix** 75% → **Mix by tone** Dots in light tones, blocks in heavy tones | Highlights break into dots while shadows gain solid shapes. |
 | Printed fabric | Turn on **Animate** → choose **Cloth** → **Angle** 0° → **Strength** 60% → **Loop length** 3 s | The image ripples from the top edge and the fixed character grid redraws it. |
 
