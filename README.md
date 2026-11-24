@@ -54,4 +54,4 @@ The compute shader samples a neighborhood for each grid cell, estimates its tone
 - [Studio host](src/studio.js) · image upload, WebGPU setup, preview, and image export.
 - [Standalone fragment shader](public/shaders/ascii.frag.glsl) · readable GLSL ES 3.00 with the glyph bitmaps included.
 
-The demo portrait is courtesy of [NASA](https://www.nasa.gov/wp-content/uploads/2022/11/sally_ride.jpg). The full shader uses public-domain VGA bitmaps from [Daniel Hepper’s font8x8](https://github.com/dhepper/font8x8). The studio controls use ScrubField, SquishSwitch, and GlideSelect from [React Bits](https://reactbits.dev/).
+The demo portrait is courtesy of [NASA](https://www.nasa.gov/wp-content/uploads/2022/11/sally_ride.jpg). The full shader uses public-domain VGA bitmaps from [Daniel Hepper’s font8x8](https://github.com/dhepper/font8x8).
