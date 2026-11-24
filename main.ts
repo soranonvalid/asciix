@@ -98,6 +98,7 @@ export function setup(device, frame) {
   const starterRamps = starterGlyphs.map((text, style) =>
     Array.from(text, (char) => (style === 0 ? frame.state.encodeTypeGlyph(char) : frame.state.encodeGlyph(char)) + "u").join(", "),
   ).join(", ");
+  const symbolCoverage = frame.state.inkCoverage.slice(0, 47).join(", ");
 
   const code = `
     diagnostic(off,derivative_uniformity);
@@ -124,11 +125,17 @@ export function setup(device, frame) {
       caption: vec4f,   // Position, size, alignment
       captionInk: vec4f,
       captionBacking: vec4f,
+      motion: vec4f, // Effect, loop phase, strength, angle in degrees
+      particles: vec4f, // Aura particle shape
     }
 
     struct Cell {
       color: vec4f,     // Average source RGB and mapped tone
       mark: vec4f,      // Packed glyph and dot coverage, contour tangent XY, edge weight
+    }
+    struct AuraEmitter {
+      cellIndex: u32,
+      weight: f32,
     }
 
     @group(0) @binding(0) var<uniform> settings: Settings;
@@ -144,6 +151,8 @@ export function setup(device, frame) {
     @group(0) @binding(6) var<storage, read> lockedColors: array<vec4f>;
     @group(0) @binding(7) var<storage, read_write> extractedColors: array<Swatch>;
     @group(0) @binding(8) var<storage, read> swatches: array<Swatch>;
+    @group(0) @binding(9) var<storage, read_write> selectedEmitters: array<AuraEmitter>;
+    @group(0) @binding(10) var<storage, read> emitters: array<AuraEmitter>;
 
     const LUMA = vec3f(0.2126, 0.7152, 0.0722);
     const DOT = 1u;
@@ -182,6 +191,8 @@ export function setup(device, frame) {
     const BITMAPS = array<vec2u, 16>(${packedBitmaps});
     const ASCII_BITMAPS = array<vec2u, 95>(${asciiBitmaps});
     const STARTER_RAMPS = array<u32, 99>(${starterRamps});
+    const SYMBOL_COVERAGE = array<f32, 47>(${symbolCoverage});
+    const TURN = 6.28318530718;
 
     fn noise(id: vec2u, salt: u32) -> f32 {
       var value = id.x * 747796405u + id.y * 2891336453u + (salt + u32(settings.composite.w)) * 277803737u;
@@ -190,7 +201,8 @@ export function setup(device, frame) {
     }
 
     fn sourceAt(uv: vec2f) -> vec4f {
-      return textureSampleLevel(source, sourceSampler, clamp(uv, vec2f(0.0), vec2f(1.0)), 0.0);
+      let bounded = clamp(uv, vec2f(0.0), vec2f(1.0));
+      return textureSampleLevel(source, sourceSampler, motionSourceUV(bounded), 0.0);
     }
 
     fn imageInverted() -> bool {
@@ -246,6 +258,39 @@ export function setup(device, frame) {
       let level = select(tone, (tone - ends[band]) / (ends[band + 1u] - ends[band]), start != 0u);
       let index = u32(clamp(floor(level * f32(count)), 0.0, f32(count - 1u)));
       return characterData[start + 1u + index];
+    }
+
+    fn glyphCoverage(glyph: u32) -> f32 {
+      if (glyph >= BRAILLE_START) { return f32(countOneBits(glyph - BRAILLE_START)) * 0.055; }
+      if (glyph >= ASCII_START) {
+        let bits = ASCII_BITMAPS[glyph - ASCII_START];
+        return f32(countOneBits(bits.x) + countOneBits(bits.y)) / 64.0;
+      }
+      return SYMBOL_COVERAGE[glyph];
+    }
+
+    fn seededGlyph(id: vec2u, glyph: u32, style: u32, band: u32) -> u32 {
+      if (glyph == 0u || noise(id, 106u) >= settings.motion.z) { return glyph; }
+      let bank = 135u + band * 65u;
+      let start = select(0u, bank, characterData[bank] > 0u);
+      let customCount = characterData[start];
+      let count = select(customCount, 9u, customCount == 0u);
+      let tick = u32(floor(fract(settings.motion.y) * 10.0 + noise(id, 107u))) % 10u;
+      let coverage = glyphCoverage(glyph);
+      var nearest = 0.08 + 0.07 * settings.motion.z;
+      var replacement = glyph;
+      for (var attempt = 0u; attempt < 5u; attempt++) {
+        let index = u32(noise(id, 111u + tick * 5u + attempt) * f32(count)) % count;
+        var candidate = STARTER_RAMPS[style * 9u + index % 9u];
+        if (customCount > 0u) { candidate = characterData[start + 1u + index]; }
+        if (candidate == 0u || candidate == glyph) { continue; }
+        let difference = abs(glyphCoverage(candidate) - coverage);
+        if (difference < nearest) {
+          nearest = difference;
+          replacement = candidate;
+        }
+      }
+      return replacement;
     }
 
     fn sourceRGB(sampleColor: vec4f) -> vec3f {
@@ -513,6 +558,9 @@ export function setup(device, frame) {
         }
       }
 
+      if (settings.motion.x == 2.0 && markKind == 0u) {
+        glyph = seededGlyph(id.xy, glyph, tonalStyle, band);
+      }
       let index = id.y * columns + id.x;
       let markCode = glyph + 512u * markKind + select(0u, 2048u, automatic && (style != 1u || markKind == 2u));
       let dropEdge = select(edge, 0.0, breakLine);
@@ -781,22 +829,45 @@ export function setup(device, frame) {
       return cells[id.y * u32(settings.grid.x) + id.x];
     }
 
-    fn drawInk(pixel: vec2f, grain: f32, antialias: f32) -> vec4f {
-      let gridPosition = pixel / settings.size.zw;
-      let id = artCellId(gridPosition);
-      let cell = artCell(id);
-      let style = u32(settings.grid.z);
+    fn auraTiles() -> vec2u {
+      return (vec2u(settings.grid.xy) + 3u) / 4u;
+    }
+
+    @compute @workgroup_size(8, 8)
+    fn findAuraEmitters(@builtin(global_invocation_id) id: vec3u) {
+      let tiles = auraTiles();
+      if (any(id.xy >= tiles)) { return; }
+      var best = AuraEmitter(0u, 0.0);
+      var bestScore = 0.0;
+      let extent = settings.size.zw / settings.size.xy;
+      let end = vec2u(settings.grid.xy);
+      for (var y = 0u; y < 4u; y++) {
+        for (var x = 0u; x < 4u; x++) {
+          let origin = id.xy * 4u + vec2u(x, y);
+          if (any(origin >= end)) { continue; }
+          let cell = artCell(origin);
+          let code = u32(cell.mark.x);
+          if (code % 512u == 0u) { continue; }
+          let uv = (vec2f(origin) + 0.5) * extent;
+          if (any(uv >= vec2f(1.0))) { continue; }
+          let sourcePixel = sourceAt(uv);
+          let darkness = 1.0 - dot(gradeImage(sourceRGB(sourcePixel)), LUMA);
+          let shadow = smoothstep(0.48, 0.84, darkness);
+          let edge = max(cell.mark.w, select(0.0, 1.0, (code / 512u) % 4u == 1u));
+          let weight = max(shadow, edge) * inputCoverage(sourcePixel);
+          let score = weight * (0.72 + 0.28 * noise(origin, 169u) + edge * 0.65);
+          if (score > bestScore) {
+            bestScore = score;
+            best = AuraEmitter(origin.y * end.x + origin.x, weight);
+          }
+        }
+      }
+      selectedEmitters[id.y * tiles.x + id.x] = best;
+    }
+
+    fn markInkColor(cell: Cell, id: vec2u) -> vec4f {
       let palette = u32(settings.grid.w);
-      let grit = settings.controls.z;
-      let variation = noise(id, 11u);
-      let markCode = u32(cell.mark.x);
-      let glyph = markCode % 512u;
-      let kind = (markCode / 512u) % 4u;
-      let automatic = markCode >= 2048u;
-      let p = gridPosition - vec2f(id);
-      let pixelInCell = 1.0 / min(settings.size.z, settings.size.w);
-      let aa = clamp(0.43 * pixelInCell * antialias, 0.008, 0.11);
-      var paperRGB = settings.paper.rgb;
+      let kind = (u32(cell.mark.x) / 512u) % 4u;
       var ink = settings.ink;
 
       if (palette == 1u) {
@@ -807,6 +878,7 @@ export function setup(device, frame) {
         let low = mix(red, amber, smoothstep(0.14, 0.60, cell.color.a));
         ink = vec4f(mix(low, ink.rgb, smoothstep(0.46, 0.91, cell.color.a)), ink.a);
       } else if (palette == 3u) {
+        let variation = noise(id, 11u);
         let cluster = noise(id / vec2u(3u), 23u);
         if (variation > 0.76 && cluster < 0.62) {
           ink = mix(ink, settings.accentOne, settings.composite.y);
@@ -824,9 +896,25 @@ export function setup(device, frame) {
       } else if (palette >= 6u) {
         ink = vec4f(mix(ink.rgb, cell.color.rgb, settings.composite.y), ink.a);
       }
+      return ink;
+    }
 
+    fn drawInk(pixel: vec2f, grain: f32, antialias: f32) -> vec4f {
+      let gridPosition = pixel / settings.size.zw;
+      let id = artCellId(gridPosition);
+      let cell = artCell(id);
+      let style = u32(settings.grid.z);
+      let grit = settings.controls.z;
+      let variation = noise(id, 11u);
+      let markCode = u32(cell.mark.x);
+      let glyph = markCode % 512u;
+      let automatic = markCode >= 2048u;
+      let p = gridPosition - vec2f(id);
+      let pixelInCell = 1.0 / min(settings.size.z, settings.size.w);
+      let aa = clamp(0.43 * pixelInCell * antialias, 0.008, 0.11);
+      let ink = markInkColor(cell, id);
       let print = select(1.0, 1.7, style == 9u);
-      paperRGB = clamp(paperRGB + 0.11 * grain, vec3f(0.0), vec3f(1.0));
+      let paperRGB = clamp(settings.paper.rgb + 0.11 * grain, vec3f(0.0), vec3f(1.0));
       let inkRGB = clamp(ink.rgb + 0.16 * grain, vec3f(0.0), vec3f(1.0));
       let offset = grit * print * 0.10 * vec2f(variation - 0.5, noise(id, 5u) - 0.5);
       let continuousFill = glyph == BLOCK || (automatic && glyph == WINDOW);
@@ -879,6 +967,87 @@ export function setup(device, frame) {
       return filtered * sourceAlpha;
     }
 
+    fn motionSourceUV(uv: vec2f) -> vec2f {
+      let effect = settings.motion.x;
+      if (effect < 3.0) { return uv; }
+      let phase = TURN * fract(settings.motion.y);
+      let strength = settings.motion.z;
+      let angle = TURN * settings.motion.w / 360.0;
+      let direction = vec2f(cos(angle), sin(angle));
+      let across = vec2f(-direction.y, direction.x);
+      let edge = smoothstep(vec2f(0.0), vec2f(0.13), min(uv, 1.0 - uv));
+      let boundary = mix(1.0, edge.x, abs(direction.x)) * mix(1.0, edge.y, abs(direction.y));
+      let column = dot(uv, direction);
+      let row = dot(uv, across);
+      let cellUV = settings.size.zw / settings.size.xy;
+      if (effect == 3.0) {
+        let shift = sin(row * 28.0 + 5.0 * sin(column * 8.0) - phase)
+          + 0.25 * cos(column * 20.0 + row * 12.0 + 2.0 * phase);
+        let offset = direction * cellUV * (boundary * shift * strength * 1.45);
+        return clamp(uv + offset, vec2f(0.0), vec2f(1.0));
+      }
+      let anchor = dot(uv, abs(across));
+      let slack = smoothstep(0.01, 0.9, anchor) * strength;
+      let ripple = TURN * (1.25 * column + 1.65 * row) - phase;
+      let shift = sin(ripple) + 0.28 * sin(row * 8.0 + phase * 2.0);
+      let offset = direction * cellUV * (boundary * shift * slack * 2.6);
+      return clamp(uv + offset, vec2f(0.0), vec2f(1.0));
+    }
+
+    fn drawAura(pixel: vec2f) -> vec4f {
+      let cellSize = settings.size.zw;
+      let grid = pixel / cellSize;
+      let tile = vec2u(grid / 4.0);
+      let strength = settings.motion.z;
+      let unit = min(cellSize.x, cellSize.y);
+      let aa = min(0.22, 0.5 / unit);
+      let angle = TURN * settings.motion.w / 360.0;
+      let flow = vec2f(cos(angle), sin(angle));
+      let tangent = normalize(flow * cellSize);
+      let tiles = auraTiles();
+      let columns = u32(settings.grid.x);
+      let shape = u32(settings.particles.x);
+      var aura = vec4f(0.0);
+      // The diagonal stream can carry particles in from the three upstream tiles.
+      for (var i = 0u; i < 4u; i++) {
+        let upstream = vec2i(tile) - vec2i(i32(i % 2u), i32(i / 2u)) * vec2i(sign(flow));
+        if (any(upstream < vec2i(0)) || any(upstream >= vec2i(tiles))) { continue; }
+        let id = vec2u(upstream);
+        let emitter = emitters[id.y * tiles.x + id.x];
+        if (emitter.weight == 0.0 || noise(id, 171u) > 0.52 + 0.48 * strength) { continue; }
+        let cellId = vec2u(emitter.cellIndex % columns, emitter.cellIndex / columns);
+        let origin = vec2f(cellId) + 0.5;
+        let age = fract(fract(settings.motion.y) + noise(id, 173u));
+        let travel = age * (1.5 + 1.9 * strength);
+        let local = grid - origin - flow * travel;
+        let p = local * cellSize / unit;
+        let radius = 0.13 + strength * (0.09 + 0.1 * noise(id, 174u));
+        let tail = min(travel, 0.4 + 1.1 * strength) * length(flow * cellSize) / unit;
+        let tailDistance = length(p - tangent * clamp(dot(p, tangent), -tail, 0.0));
+        var mask = inside(tailDistance, radius, aa);
+        if (shape == 1u) {
+          mask = inside(length(p), radius, aa);
+        } else if (shape == 2u) {
+          mask = inside(max(abs(p.x), abs(p.y)), radius, aa);
+        } else if (shape == 3u) {
+          mask = mask * 0.38;
+          if (all(abs(local) < vec2f(0.6))) {
+            let cell = artCell(cellId);
+            let code = u32(cell.mark.x);
+            let echo = markMask(local / 0.86 + 0.5, code % 512u, u32(settings.grid.z),
+              cell, cellId, noise(cellId, 11u), aa, code >= 2048u);
+            mask = max(mask, echo);
+          }
+        }
+        if (mask <= 0.0) { continue; }
+        let ink = markInkColor(artCell(cellId), cellId);
+        let life = smoothstep(0.0, 0.1, age) * (1.0 - smoothstep(0.52, 1.0, age));
+        let alpha = mask * life * sqrt(emitter.weight) * min(1.0, strength * 1.7) * ink.a;
+        aura = vec4f(ink.rgb * alpha, alpha) + aura * (1.0 - alpha);
+      }
+      return aura;
+    }
+
     fn drawCaption(pixel: vec2f) -> vec4f {
       let count = characterData[CAPTION_START];
       if (count == 0u) { return vec4f(0.0); }
@@ -907,7 +1076,11 @@ export function setup(device, frame) {
 
     @fragment
     fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
-      let art = drawArt(position.xy);
+      var art = drawArt(position.xy);
+      if (settings.motion.x == 1.0) {
+        let aura = drawAura(position.xy);
+        art = aura + art * (1.0 - aura.a);
+      }
       let caption = drawCaption(position.xy);
       let result = caption + art * (1.0 - caption.a);
       if ((u32(settings.composite.x) & 2u) != 0u) {
@@ -920,7 +1093,7 @@ export function setup(device, frame) {
   frame.state.module = device.createShaderModule({ code });
   frame.state.sampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
   frame.state.uniforms = device.createBuffer({
-    size: 336,
+    size: 368,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   frame.state.charactersBuffer = device.createBuffer({
@@ -930,6 +1103,7 @@ export function setup(device, frame) {
   frame.state.characterValues = new Uint32Array(439);
   frame.state.lockedColors = device.createBuffer({ size: 8 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   frame.state.paletteResult = device.createBuffer({ size: 8 * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  frame.state.auraEmitters = device.createBuffer({ size: 8, usage: GPUBufferUsage.STORAGE });
   frame.state.extractPalette = device.createComputePipeline({
     layout: "auto",
     compute: { module: frame.state.module, entryPoint: "extractPalette" },
@@ -958,6 +1132,8 @@ export function render(device, frame) {
   }
 
   const props = frame.params;
+  const { effect = 0, phase = 0, strength = 0, particle = 0, direction = 0,
+    angle = effect === 1 ? 38 : ([0, 90, 45][direction] ?? 0) } = frame.motion ?? {};
   const style = Math.max(0, Math.min(10, Math.round(props.style)));
   const columns = Math.max(24, Math.min(240, Math.round(props.columns)));
   const cellWidth = output.width / columns;
@@ -1095,6 +1271,8 @@ export function render(device, frame) {
     props.labelX * 0.01, props.labelY * 0.01, props.labelSize * 0.01, props.labelAlign * 0.5,
     props.labelColor.r, props.labelColor.g, props.labelColor.b, props.labelColor.a ?? 1,
     props.labelBacking.r, props.labelBacking.g, props.labelBacking.b, props.labelBacking.a ?? 0,
+    effect, phase, strength, angle,
+    particle, 0, 0, 0,
   ]));
   const shared = [
     { binding: 0, resource: { buffer: state.uniforms } },
@@ -1130,11 +1308,35 @@ export function render(device, frame) {
   compute.dispatchWorkgroups(Math.ceil(columns / 8), Math.ceil(rows / 8));
   compute.end();
 
+  if (effect === 1) {
+    const tileColumns = Math.ceil(columns / 4);
+    const tileRows = Math.ceil(rows / 4);
+    const size = tileColumns * tileRows * 8;
+    if (state.auraEmitters.size < size) {
+      state.auraEmitters.destroy();
+      state.auraEmitters = device.createBuffer({ size, usage: GPUBufferUsage.STORAGE });
+    }
+    state.auraPipeline ??= device.createComputePipeline({
+      layout: "auto",
+      compute: { module: state.module, entryPoint: "findAuraEmitters" },
+    });
+    const selectEmitters = encoder.beginComputePass();
+    selectEmitters.setPipeline(state.auraPipeline);
+    selectEmitters.setBindGroup(0, device.createBindGroup({
+      layout: state.auraPipeline.getBindGroupLayout(0),
+      entries: [...shared, { binding: 4, resource: { buffer: state.cells } },
+        { binding: 9, resource: { buffer: state.auraEmitters } }],
+    }));
+    selectEmitters.dispatchWorkgroups(Math.ceil(tileColumns / 8), Math.ceil(tileRows / 8));
+    selectEmitters.end();
+  }
+
   const pass = encoder.beginRenderPass({ colorAttachments });
   pass.setPipeline(state.pipeline);
   pass.setBindGroup(0, device.createBindGroup({
     layout: state.pipeline.getBindGroupLayout(0),
-    entries: [...shared, { binding: 4, resource: { buffer: state.cells } }, characterBuffer, extracted],
+    entries: [...shared, { binding: 4, resource: { buffer: state.cells } }, characterBuffer, extracted,
+      { binding: 10, resource: { buffer: state.auraEmitters } }],
   }));
   pass.draw(3);
   pass.end();

@@ -8,23 +8,61 @@ import './styles.css';
 import ScrubField from './ScrubField.jsx';
 import SquishSwitch from './SquishSwitch.jsx';
 import GlideSelect from './GlideSelect.jsx';
+import { createCometControl } from './CometControl.js';
+import { createArtworkNavigation } from './artwork-navigation.js';
+import { fitImage, gifFrameDelay, makeGifEncoder, openGif } from './gif.js';
 import { render, setup } from '../main.ts';
-import { properties } from './figma-shaders.js';
+import { properties as shaderProperties } from './figma-shaders.js';
 import portrait from '../assets/portrait.jpg';
 import icon from '../assets/icon.png';
 import ramp from '../assets/ramp.png';
 
 const samples = { portrait, icon, ramp };
+const properties = {
+  ...shaderProperties,
+  animate: { type: "boolean", label: "Animate", defaultValue: false },
+  animationEffect: {
+    type: "number", label: "Effect", control: "select", defaultValue: 1,
+    options: [
+      { value: 1, label: "Aura" }, { value: 2, label: "Seed" },
+      { value: 3, label: "Heatwave" }, { value: 4, label: "Cloth" },
+    ],
+  },
+  animationStrength: { type: "number", label: "Strength", control: "slider", min: 0, max: 100, step: 1, defaultValue: 65 },
+  animationDuration: { type: "number", label: "Loop length", control: "slider", min: 1, max: 8, step: 1, defaultValue: 3, suffix: "s" },
+  auraShape: {
+    type: "number", label: "Particle shape", control: "select", defaultValue: 3,
+    options: [
+      { value: 3, label: "Characters" }, { value: 0, label: "Streaks" },
+      { value: 1, label: "Dots" }, { value: 2, label: "Blocks" },
+    ],
+  },
+  motionAngle: { type: "number", label: "Angle", control: "slider", min: 0, max: 359, step: 1, defaultValue: 0, suffix: "°" },
+  auraAngle: { type: "number", label: "Angle", control: "slider", min: 0, max: 359, step: 1, defaultValue: 38, suffix: "°" },
+};
+const motionFrameMs = 50;
+const effectDescriptions = [
+  "Shadow and edge characters shed drifting marks in their own ink.",
+  "Nearby glyphs in the same character set trade places at similar ink density.",
+  "Local waves warp the source before characters are drawn.",
+  "A wind ripple bends the source from a pinned edge before characters are drawn.",
+];
 const get = (id) => document.getElementById(id);
 const sourceCanvas = get("source");
 const resultCanvas = get("result");
 const artwork = get("artwork");
+const navigation = createArtworkNavigation(get("view-area"), artwork, scheduleDraw);
 const exportFormat = get("export-format");
 const exportScale = get("export-scale");
 const copyButton = get("copy");
 const exportButton = get("export");
+const gifButton = get("gif-playback");
+const gifOption = exportFormat.querySelector('[value="gif"]');
+const animationTab = get("group-animation-controls");
 const supportsImageCopy = typeof ClipboardItem !== "undefined" && typeof navigator.clipboard?.write === "function";
 const before = sourceCanvas.getContext("2d");
+const startupLoader = get("startup-loader");
+const imageLoader = get("image-loader");
 const state = {};
 const defaults = Object.fromEntries(Object.entries(properties).map(([key, spec]) => [key, spec.defaultValue]));
 const settings = { ...defaults };
@@ -34,18 +72,42 @@ const fields = {};
 const edgeFields = [];
 const controlInputs = [];
 let input;
+let animation;
+let exportState;
 let device;
 let after;
 let sourceName = "portrait";
 let activeSample = "portrait";
 let pendingDraw = 0;
+let previewDirty = false;
+let motionDrawing = false;
+let motionStarted = 0;
+let nextMotionFrame = 0;
+let previewPhase = 0;
+let wasAnimating = false;
 let loadNumber = 0;
 let canRender = false;
+let loadingImage = false;
 let outputBusy = false;
 
 function status(message, error = false) {
   get("status").textContent = message;
   get("status").toggleAttribute("data-error", error);
+}
+
+function revealStudio() {
+  startupLoader.removeAttribute("data-active");
+  startupLoader.setAttribute("aria-hidden", "true");
+  document.querySelector(".masthead").inert = false;
+  document.querySelector(".studio").inert = false;
+}
+
+function setImageLoading(active) {
+  loadingImage = active;
+  imageLoader.toggleAttribute("data-active", active && !startupLoader.hasAttribute("data-active"));
+  imageLoader.parentElement.setAttribute("aria-busy", String(active));
+  syncOutputControls();
+  if (!active && settings.animate) queuePreview();
 }
 
 function renderParams() {
@@ -56,77 +118,204 @@ function renderParams() {
     ink: terminalInk,
     paper: terminalPaper,
     polarity: settings.polarity || 1,
-    labelColor: settings.labelColor === defaults.labelColor ? terminalInk : settings.labelColor,
+  };
+}
+
+function motionAt(phase, params = settings) {
+  if (!params.animate || params.animationStrength === 0) return undefined;
+  return {
+    effect: params.animationEffect, phase, strength: params.animationStrength * 0.01,
+    particle: params.auraShape, angle: params.animationEffect === 1 ? params.auraAngle : params.motionAngle,
   };
 }
 
 const maxRasterSide = () => Math.min(device.limits.maxTextureDimension2D, 4096);
 
-function paint() {
+function paint(updatePalette = true) {
   if (!input || !canRender) return;
   const size = artwork.getBoundingClientRect();
   if (!size.width || !size.height) return;
   // A matching backing grid avoids resampling the glyphs a second time.
-  const pixelScale = Math.min(devicePixelRatio, maxRasterSide() / Math.max(size.width, size.height));
+  const pixelScale = Math.min(devicePixelRatio * Math.min(1, 2 / navigation.zoom),
+    maxRasterSide() / Math.max(size.width, size.height));
   const width = Math.max(1, Math.round(size.width * pixelScale));
   const height = Math.max(1, Math.round(size.height * pixelScale));
   if (resultCanvas.width !== width) resultCanvas.width = width;
   if (resultCanvas.height !== height) resultCanvas.height = height;
   const start = performance.now();
-  render(device, { input, output: after.getCurrentTexture(), state, params: renderParams() });
+  render(device, { input, output: after.getCurrentTexture(), state, params: renderParams(), motion: motionAt(previewPhase) });
   get("render-time").textContent = "// " + (performance.now() - start).toFixed(1) + " MS";
-  refreshPalette();
+  if (updatePalette) refreshPalette();
 }
 
-function scheduleDraw() {
-  if (pendingDraw) return;
-  pendingDraw = requestAnimationFrame(() => {
+function previewVisible() {
+  return input && canRender && !document.hidden && !get("preview-panel").hidden;
+}
+
+function queuePreview() {
+  if (pendingDraw || motionDrawing || !previewVisible()) return;
+  pendingDraw = requestAnimationFrame((now) => {
     pendingDraw = 0;
-    paint();
+    if (!previewVisible()) return;
+    const animate = settings.animate && settings.animationStrength > 0 && !outputBusy && !loadingImage;
+    if (previewDirty || (animate && now >= nextMotionFrame)) {
+      if (animate) {
+        previewPhase = (Math.max(0, now - motionStarted) / (settings.animationDuration * 1000)) % 1;
+        nextMotionFrame = now + motionFrameMs;
+      }
+      const updatePalette = previewDirty;
+      previewDirty = false;
+      paint(updatePalette);
+      if (animate) {
+        motionDrawing = true;
+        device.queue.onSubmittedWorkDone().then(finishMotionFrame, finishMotionFrame);
+        return;
+      }
+    }
+    if (animate) queuePreview();
   });
 }
 
+function finishMotionFrame() {
+  motionDrawing = false;
+  queuePreview();
+}
+
+function scheduleDraw() {
+  previewDirty = true;
+  queuePreview();
+}
+
+function createInputTexture(width, height) {
+  return device.createTexture({
+    size: { width, height },
+    format: "rgba8unorm",
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+}
+
+function uploadFrame(source, texture) {
+  device.queue.copyExternalImageToTexture(
+    { source }, { texture, premultipliedAlpha: true }, { width: texture.width, height: texture.height },
+  );
+}
+
+function pauseGif() {
+  clearTimeout(animation?.playback?.timer);
+  if (animation) animation.playback = null;
+  gifButton.textContent = "Play GIF";
+}
+
+function closeGif() {
+  pauseGif();
+  animation?.decoder.close();
+  animation = undefined;
+  gifButton.hidden = true;
+}
+
+function playGif() {
+  const current = animation;
+  if (!current || current.playback || !canRender) return;
+  const texture = input;
+  const playback = { deadline: performance.now() + (current.finished ? 0 : current.delay), timer: 0 };
+  current.playback = playback;
+  gifButton.textContent = "Pause GIF";
+
+  function queueFrame() {
+    playback.timer = setTimeout(advance, Math.max(0, playback.deadline - performance.now()));
+  }
+
+  async function advance() {
+    const frame = current.finished ? 0 : current.frame + 1;
+    if (frame >= current.frameCount * (current.repetitions + 1)) {
+      current.finished = true;
+      pauseGif();
+      return;
+    }
+    let image;
+    try {
+      ({ image } = await current.decoder.decode({ frameIndex: frame % current.frameCount }));
+      const delay = gifFrameDelay(image);
+      image = await fitImage(image, texture.width, texture.height);
+      if (current.playback !== playback) return;
+      uploadFrame(image, texture);
+      before.clearRect(0, 0, texture.width, texture.height);
+      before.drawImage(image, 0, 0);
+      current.frame = frame;
+      current.delay = delay;
+      current.finished = false;
+      if (!get("preview-panel").hidden) scheduleDraw();
+      playback.deadline = Math.max(performance.now(), playback.deadline + delay);
+      queueFrame();
+    } catch {
+      if (current.playback === playback) {
+        pauseGif();
+        status("Could not decode the next GIF frame.", true);
+      }
+    } finally {
+      image?.close();
+    }
+  }
+
+  queueFrame();
+}
+
+gifButton.addEventListener("click", () => {
+  if (animation?.playback) pauseGif();
+  else playGif();
+});
+
 async function loadImage(src, name, sample = "custom") {
   const request = ++loadNumber;
+  setImageLoading(true);
+  status("Loading image…");
   let bitmap;
+  let decoder;
   let next;
   try {
-    if (src instanceof Blob) {
-      bitmap = await createImageBitmap(src);
-    } else {
+    let blob = src;
+    if (!(blob instanceof Blob)) {
       const response = await fetch(src);
       if (!response.ok) throw new Error("Could not load the sample image.");
-      bitmap = await createImageBitmap(await response.blob());
+      blob = await response.blob();
     }
+    const isGif = blob.type === "image/gif" || /\.gif$/i.test(blob.name ?? "");
+    if (isGif) decoder = await openGif(blob);
+    const track = decoder?.tracks.selectedTrack;
+    const animated = track?.frameCount > 1;
+    const gifUnavailable = isGif && !decoder;
+    if (animated) ({ image: bitmap } = await decoder.decode({ frameIndex: 0 }));
+    else bitmap = await createImageBitmap(blob);
     if (request !== loadNumber) return false;
-    const { width: originalWidth, height: originalHeight } = bitmap;
+    const delay = animated ? gifFrameDelay(bitmap) : 0;
+    const originalWidth = bitmap.displayWidth ?? bitmap.width;
+    const originalHeight = bitmap.displayHeight ?? bitmap.height;
     const factor = Math.min(1, maxRasterSide() / Math.max(originalWidth, originalHeight));
     const width = Math.max(1, Math.round(originalWidth * factor));
     const height = Math.max(1, Math.round(originalHeight * factor));
-    if (factor < 1) {
-      const fullSize = bitmap;
-      bitmap = await createImageBitmap(fullSize, { resizeWidth: width, resizeHeight: height, resizeQuality: "high" });
-      fullSize.close();
-      if (request !== loadNumber) return false;
-    }
-    if (!canRender) return false;
-    next = device.createTexture({
-      size: { width, height },
-      format: "rgba8unorm",
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-    device.queue.copyExternalImageToTexture({ source: bitmap }, { texture: next, premultipliedAlpha: true }, { width, height });
+    bitmap = await fitImage(bitmap, width, height);
+    if (request !== loadNumber || !canRender) return false;
+    next = createInputTexture(width, height);
+    uploadFrame(bitmap, next);
     sourceCanvas.width = width;
     sourceCanvas.height = height;
     before.drawImage(bitmap, 0, 0);
+    closeGif();
     input?.destroy();
     input = next;
     next = undefined;
+    if (animated) {
+      animation = { blob, decoder, frameCount: track.frameCount, repetitions: track.repetitionCount, frame: 0, delay, finished: false };
+      decoder = undefined;
+      gifButton.hidden = false;
+    }
+    if (animated) exportFormat.value = "gif";
     sourceName = name;
     activeSample = sample;
     get("sample").value = activeSample;
     get("source-credit").hidden = sample !== "portrait";
     artwork.style.setProperty("--image-ratio", width / height);
+    navigation.reset();
     get("dimensions").textContent = originalWidth + " × " + originalHeight + " PX";
     const limit = maxRasterSide();
     for (const option of exportScale.options) {
@@ -136,7 +325,18 @@ async function loadImage(src, name, sample = "custom") {
     exportScale.title = "Scales above " + limit + " pixels on the longest side are disabled";
     syncOutputControls();
     paint();
-    status(factor < 1 ? "Working image resized to " + width + " × " + height + " px." : "[LIVE_SYNC]");
+    const installedAnimation = animation;
+    await device.queue.onSubmittedWorkDone();
+    if (canRender && installedAnimation && animation === installedAnimation &&
+        !matchMedia("(prefers-reduced-motion: reduce)").matches) playGif();
+    if (request !== loadNumber || !canRender) return false;
+    if (animated) {
+      status(animation.frameCount + " GIF frames" + (factor < 1 ? " · resized to " + width + " × " + height + " px" : ""));
+    } else if (gifUnavailable) {
+      status("GIF playback is unavailable in this browser. Showing a still frame.");
+    } else {
+      status(factor < 1 ? "Working image resized to " + width + " × " + height + " px." : "[LIVE_SYNC]");
+    }
     return true;
   } catch (error) {
     if (request === loadNumber) {
@@ -147,7 +347,9 @@ async function loadImage(src, name, sample = "custom") {
     return false;
   } finally {
     bitmap?.close();
+    decoder?.close();
     next?.destroy();
+    if (request === loadNumber) setImageLoading(false);
   }
 }
 
@@ -254,7 +456,7 @@ function addFields(container, keys) {
     if (spec.control === "slider") {
       const scrub = mountScrubField({
         ...spec, id: key,
-        suffix: unitlessFields.has(key) ? "" : "%",
+        suffix: spec.suffix ?? (unitlessFields.has(key) ? "" : "%"),
         formatSpecial: key === "levels" ? (value) => value < 2 ? "Off" : undefined
           : lookDefaults.has(key) ? (value) => value === -1 ? "Look default" : undefined : undefined,
         onChange(value) {
@@ -288,7 +490,7 @@ function addFields(container, keys) {
 }
 
 addFields(get("look"), ["style"]);
-addFields(get("quick"), ["invertImage", "invertColors", "transparentPaper"]);
+addFields(get("quick"), ["invertImage", "invertColors", "transparentPaper", "animate"]);
 fields.invertImage.field.title = "Invert pixels before choosing marks.";
 fields.invertColors.field.title = "Invert the rendered inks and paper.";
 fields.transparentPaper.field.title = "Remove paper. Existing image transparency is preserved.";
@@ -355,7 +557,7 @@ addFields(get("color-controls"), ["palette", "polarity", "colorMix"]);
 const colors = element("div", { id: "custom-colors", hidden: true });
 const colorFields = {};
 get("color-controls").append(colors);
-for (const key of ["ink", "accentOne", "accentTwo", "paper", "labelColor", "labelBacking"]) {
+for (const key of ["ink", "accentOne", "accentTwo", "paper"]) {
   const selected = element("input", { id: key, type: "color", disabled: true });
   const label = element("label", { htmlFor: key, textContent: properties[key].label });
   const opacity = mountScrubField({
@@ -372,25 +574,22 @@ for (const key of ["ink", "accentOne", "accentTwo", "paper", "labelColor", "labe
   }
   selected.addEventListener("input", () => setColor(settings[key].a));
   colorFields[key] = { selected, opacity, label, swatch };
-  (key.startsWith("label") ? get("label-controls") : colors).append(swatch);
+  colors.append(swatch);
   controlInputs.push(selected);
 }
 addFields(get("color-controls"), ["sourceKey", "keyThreshold", "keySoftness"]);
 addFields(get("print-finish"), ["texture", "registration", "dither", "seed"]);
-const labelGroup = get("label-controls");
-addFields(labelGroup, ["labelText", "labelX", "labelY", "labelSize", "labelAlign"]);
-labelGroup.prepend(fields.labelText.field);
-fields.labelText.control.maxLength = 96;
-fields.labelText.control.placeholder = "Type a caption or specimen name";
-const labelSwatch = element("select", { id: "caption-swatch", disabled: true });
-const labelSwatchField = element("div", { className: "field" },
-  element("label", { htmlFor: labelSwatch.id, textContent: "Label ink source" }), labelSwatch);
-labelGroup.append(labelSwatchField);
-controlInputs.push(labelSwatch);
-labelSwatch.addEventListener("change", () => {
-  settings.labelSwatch = Number(labelSwatch.value);
+const animationGroup = get("animation-controls");
+addFields(animationGroup, ["animationEffect"]);
+const effectHelp = element("p", { id: "animation-help", className: "key-help" });
+fields.animationEffect.field.after(effectHelp);
+const comet = createCometControl((angle, strength) => {
+  settings[settings.animationEffect === 1 ? "auraAngle" : "motionAngle"] = angle;
+  settings.animationStrength = strength;
   controlsChanged();
 });
+animationGroup.append(comet.field);
+addFields(animationGroup, ["motionAngle", "auraAngle", "animationStrength", "animationDuration", "auraShape"]);
 
 const paletteTools = element("div", { className: "palette-tools" });
 const swatchList = element("div", { className: "palette-swatches" });
@@ -466,7 +665,6 @@ function syncPalettePanel() {
   const count = activeSwatches();
   paletteTools.hidden = count === 0;
   fields.swatchCount.field.hidden = settings.palette !== 7;
-  labelSwatchField.hidden = count === 0;
   const swatches = swatchInfo();
   for (const [index, { row, chip, name, hex, lock }] of paletteRows.entries()) {
     row.hidden = index >= count;
@@ -481,13 +679,13 @@ function syncPalettePanel() {
   // Refresh option text only when names or the palette size change.
   const signature = JSON.stringify(swatches.slice(0, count).map(({ name }) => name));
   const rules = settings.inkRules.split(",");
-  for (const [index, select] of [...inkAssignments, labelSwatch].entries()) {
+  for (const [index, select] of inkAssignments.entries()) {
     if (select.dataset.options !== signature) {
-      select.replaceChildren(new Option(index < 12 ? "Auto" : "Custom ink", "0"),
+      select.replaceChildren(new Option("Auto", "0"),
         ...swatches.slice(0, count).map(({ name }, i) => new Option((i + 1) + " · " + name, String(i + 1))));
       select.dataset.options = signature;
     }
-    const value = index < 12 ? Number(rules[index] || 0) : settings.labelSwatch;
+    const value = Number(rules[index] || 0);
     select.value = value <= count ? value : 0;
   }
   syncGlideSelects();
@@ -529,6 +727,7 @@ async function refreshPalette() {
 function bindTabs(tabList, onSelect) {
   const tabs = [...tabList.querySelectorAll('[role="tab"]')];
   function select(tab) {
+    if (tab.disabled) return;
     for (const button of tabs) {
       const selected = button === tab;
       button.setAttribute("aria-selected", String(selected));
@@ -539,20 +738,22 @@ function bindTabs(tabList, onSelect) {
   }
   for (const tab of tabs) tab.addEventListener("click", () => select(tab));
   tabList.addEventListener("keydown", (event) => {
-    const index = tabs.indexOf(document.activeElement);
+    const enabled = tabs.filter((tab) => !tab.disabled);
+    const index = enabled.indexOf(document.activeElement);
     if (index < 0) return;
     const destinations = {
-      ArrowLeft: (index + tabs.length - 1) % tabs.length,
-      ArrowRight: (index + 1) % tabs.length,
+      ArrowLeft: (index + enabled.length - 1) % enabled.length,
+      ArrowRight: (index + 1) % enabled.length,
       Home: 0,
-      End: tabs.length - 1,
+      End: enabled.length - 1,
     };
     if (!Object.hasOwn(destinations, event.key)) return;
     event.preventDefault();
-    const tab = tabs[destinations[event.key]];
+    const tab = enabled[destinations[event.key]];
     select(tab);
     tab.focus();
   });
+  return select;
 }
 
 bindTabs(get("view-tabs"), (tab) => {
@@ -560,7 +761,10 @@ bindTabs(get("view-tabs"), (tab) => {
   get("edge-tag").hidden = get("grid-tag").hidden = sourceVisible;
   if (!sourceVisible) scheduleDraw();
 });
-bindTabs(get("group-menu"), () => { get("parameter-body").scrollTop = 0; });
+const selectGroup = bindTabs(get("group-menu"), () => { get("parameter-body").scrollTop = 0; });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) scheduleDraw();
+});
 
 function syncReadouts() {
   get("current-style").textContent = fields.style.control.selectedOptions[0].textContent;
@@ -623,6 +827,16 @@ function syncControls() {
     else if (toggle) toggle.sync(value);
     else if (control.value !== String(value)) control.value = value;
   }
+  animationTab.disabled = !canRender || !settings.animate;
+  if (animationTab.disabled && animationTab.getAttribute("aria-selected") === "true") {
+    selectGroup(get("group-image-treatment"));
+  }
+  effectHelp.textContent = effectDescriptions[settings.animationEffect - 1];
+  fields.auraShape.field.hidden = settings.animationEffect !== 1;
+  comet.field.hidden = settings.animationEffect === 2;
+  fields.motionAngle.field.hidden = settings.animationEffect < 3;
+  fields.auraAngle.field.hidden = settings.animationEffect !== 1;
+  if (!comet.field.hidden) comet.sync(settings.animationEffect === 1 ? settings.auraAngle : settings.motionAngle, settings.animationStrength);
   fields.detailAmount.field.hidden = settings.detail === 0;
   fields.warpAmount.field.hidden = settings.warp === 0;
   bandFields.hidden = settings.mixByTone !== 3;
@@ -641,9 +855,9 @@ function syncControls() {
   };
   const roles = colorRoles[settings.palette] ?? ["Ink", "Accent ink 1", "Accent ink 2"];
   for (const [index, [key, swatch]] of Object.entries(colorFields).entries()) {
-    const { r, g, b, a } = key === "labelColor" ? renderParams().labelColor : settings[key];
+    const { r, g, b, a } = settings[key];
     swatch.selected.value = "#" + [r, g, b].map((channel) => Math.round(channel * 255).toString(16).padStart(2, "0")).join("");
-    swatch.label.textContent = key.startsWith("label") ? properties[key].label : roles[index] ?? "Paper";
+    swatch.label.textContent = roles[index] ?? "Paper";
     swatch.opacity.sync(Math.round(a * 100), swatch.label.textContent + " opacity");
   }
   syncPalettePanel();
@@ -652,7 +866,15 @@ function syncControls() {
 
 function controlsChanged() {
   settings.bandLight = Math.min(settings.bandLight, settings.bandHeavy - 1);
+  if (settings.animate && !wasAnimating) {
+    motionStarted = performance.now();
+    previewPhase = 0;
+    nextMotionFrame = 0;
+    if (gifOption.hidden) exportFormat.value = "gif";
+  }
+  wasAnimating = settings.animate;
   syncControls();
+  syncOutputControls();
   scheduleDraw();
 }
 
@@ -670,26 +892,63 @@ get("sample").addEventListener("change", ({ target }) => {
   const sample = target.value;
   if (sample !== "custom") loadImage(samples[sample], sample, sample);
 });
+
+function openImageFile(file) {
+  if (file && canRender && !startupLoader.hasAttribute("data-active")) {
+    loadImage(file, file.name.replace(/\.[^.]+$/, "") || "image");
+  }
+}
+
 get("open").addEventListener("click", () => get("file").click());
 get("file").addEventListener("change", ({ target }) => {
   const file = target.files[0];
   target.value = "";
-  if (file) loadImage(file, file.name.replace(/\.[^.]+$/, "") || "image");
+  openImageFile(file);
+});
+
+window.addEventListener("dragover", (event) => {
+  if (!event.dataTransfer?.types.includes("Files")) return;
+  event.preventDefault();
+  const ready = canRender && !startupLoader.hasAttribute("data-active");
+  event.dataTransfer.dropEffect = ready ? "copy" : "none";
+  document.body.toggleAttribute("data-file-drag", ready);
+});
+window.addEventListener("dragleave", (event) => {
+  if (!event.relatedTarget) document.body.removeAttribute("data-file-drag");
+});
+window.addEventListener("drop", (event) => {
+  if (!event.dataTransfer?.types.includes("Files")) return;
+  event.preventDefault();
+  document.body.removeAttribute("data-file-drag");
+  if (!canRender || startupLoader.hasAttribute("data-active")) return;
+  const { files } = event.dataTransfer;
+  if (files.length !== 1) {
+    status("Drop one image file at a time.", true);
+    return;
+  }
+  openImageFile(files[0]);
 });
 
 function syncOutputControls() {
-  const disabled = !input || !canRender || outputBusy;
+  const disabled = !input || !canRender || loadingImage || outputBusy;
+  gifOption.hidden = !animation && !settings.animate;
+  if (gifOption.hidden && exportFormat.value === "gif") exportFormat.value = "png";
   exportFormat.disabled = exportScale.disabled = exportButton.disabled = disabled;
   copyButton.disabled = disabled || !supportsImageCopy;
   if (!supportsImageCopy) copyButton.title = "Image clipboard unavailable. Use Export to download the artwork.";
-  get("export-state").textContent = !canRender ? "Offline" : outputBusy ? "Working" : input ? "Ready" : "Waiting";
+  get("export-state").textContent = !canRender ? "Offline" : outputBusy || loadingImage ? "Working" : input ? "Ready" : "Waiting";
   syncGlideSelects();
 }
 
-async function renderImage(scale, format) {
-  const width = Math.max(1, Math.round(input.width * scale));
-  const height = Math.max(1, Math.round(input.height * scale));
+async function renderPixels(texture, scale, params, motion) {
+  const width = Math.max(1, Math.round(texture.width * scale));
+  const height = Math.max(1, Math.round(texture.height * scale));
   const rowSize = Math.ceil(width * 4 / 256) * 256;
+  if (!exportState) {
+    const resources = {};
+    setup(device, { state: resources });
+    exportState = resources;
+  }
   const output = device.createTexture({
     size: { width, height },
     format: "rgba8unorm",
@@ -697,7 +956,7 @@ async function renderImage(scale, format) {
   });
   let buffer;
   try {
-    render(device, { input, output, state, params: renderParams() });
+    render(device, { input: texture, output, state: exportState, params, motion });
     buffer = device.createBuffer({ size: rowSize * height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
     const encoder = device.createCommandEncoder();
     encoder.copyTextureToBuffer({ texture: output }, { buffer, bytesPerRow: rowSize }, { width, height });
@@ -718,28 +977,110 @@ async function renderImage(scale, format) {
       }
     }
     buffer.unmap();
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    context.putImageData(straight, 0, 0);
-    if (format === "jpeg") {
-      context.globalCompositeOperation = "destination-over";
-      context.fillStyle = "#fff";
-      context.fillRect(0, 0, width, height);
-    }
-    const mime = "image/" + format;
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, mime, 0.92));
-    if (blob?.type !== mime) throw new Error("Could not encode " + format.toUpperCase() + " in this browser.");
-    return blob;
+    return straight;
   } finally {
     buffer?.destroy();
     output.destroy();
   }
 }
 
+async function renderImage(scale, format, params) {
+  const pixels = await renderPixels(input, scale, params, motionAt(previewPhase, params));
+  const { width, height } = pixels;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.putImageData(pixels, 0, 0);
+  if (format === "jpeg") {
+    context.globalCompositeOperation = "destination-over";
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, width, height);
+  }
+  const mime = "image/" + format;
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, mime, 0.92));
+  if (blob?.type !== mime) throw new Error("Could not encode " + format.toUpperCase() + " in this browser.");
+  return blob;
+}
+
+async function renderGif(scale, params) {
+  const source = input;
+  const sourceGif = animation;
+  const { width, height } = source;
+  const texture = createInputTexture(width, height);
+  let decoder;
+  try {
+    if (!sourceGif) {
+      // Snapshot the current input before yielding so an upload can replace it during export.
+      const copy = device.createCommandEncoder();
+      copy.copyTextureToTexture({ texture: source }, { texture }, { width, height });
+      device.queue.submit([copy.finish()]);
+    }
+    const encoder = await makeGifEncoder(sourceGif?.repetitions ?? Infinity);
+    const preferredLoop = params.animationDuration * 1000;
+    async function addFrame(delay, phase) {
+      if (!canRender) throw new Error("The graphics device stopped during GIF export.");
+      encoder.add(await renderPixels(texture, scale, params, motionAt(phase, params)), delay);
+    }
+
+    if (!sourceGif) {
+      const frames = preferredLoop / motionFrameMs;
+      for (let index = 0; index < frames; index += 1) {
+        status("Exporting GIF · " + (index + 1) + " / " + frames);
+        await addFrame(motionFrameMs, index / frames);
+      }
+      return encoder.finish();
+    }
+
+    decoder = await openGif(sourceGif.blob);
+    if (!decoder) throw new Error("GIF decoding is unavailable in this browser.");
+    let effectLoop = preferredLoop;
+    const hasMotion = Boolean(motionAt(0, params));
+    if (hasMotion) {
+      let duration = 0;
+      for (let index = 0; index < sourceGif.frameCount; index += 1) {
+        const { image } = await decoder.decode({ frameIndex: index });
+        duration += gifFrameDelay(image);
+        image.close();
+      }
+      // Fit whole effect cycles into one source cycle so both loop at the same seam.
+      effectLoop = duration / Math.max(1, Math.round(duration / preferredLoop));
+    }
+    let elapsed = 0;
+    for (let index = 0; index < sourceGif.frameCount; index += 1) {
+      status("Exporting GIF · " + (index + 1) + " / " + sourceGif.frameCount);
+      const { image: frame } = await decoder.decode({ frameIndex: index });
+      const delay = gifFrameDelay(frame);
+      const image = await fitImage(frame, width, height);
+      try {
+        uploadFrame(image, texture);
+      } finally {
+        image.close();
+      }
+      if (hasMotion) {
+        // GIF stores delays in centiseconds. Keep the source's total delay when subdividing.
+        const ticks = Math.max(1, Math.round(delay / 10));
+        const steps = Math.max(1, Math.min(Math.ceil(delay / motionFrameMs), Math.floor(ticks / 2)));
+        let previous = 0;
+        for (let step = 1; step <= steps; step += 1) {
+          const next = Math.round(step * ticks / steps) * 10;
+          await addFrame(next - previous, ((elapsed + previous) % effectLoop) / effectLoop);
+          previous = next;
+        }
+      } else {
+        await addFrame(delay, 0);
+      }
+      elapsed += delay;
+    }
+    return encoder.finish();
+  } finally {
+    texture.destroy();
+    decoder?.close();
+  }
+}
+
 async function outputArtwork(copy) {
-  if (!input || !canRender || outputBusy || (copy && !supportsImageCopy)) return;
+  if (!input || !canRender || loadingImage || outputBusy || (copy && !supportsImageCopy)) return;
   const format = copy ? "png" : exportFormat.value;
   const label = copy ? "PNG" : exportFormat.selectedOptions[0].label;
   outputBusy = true;
@@ -747,7 +1088,9 @@ async function outputArtwork(copy) {
   status(copy ? "Copying PNG…" : "Preparing " + label + "…");
   try {
     const name = sourceName + " - " + get("current-style").textContent + "." + (format === "jpeg" ? "jpg" : format);
-    const image = renderImage(Number(exportScale.value), format);
+    const scale = Number(exportScale.value);
+    const params = { ...renderParams() };
+    const image = format === "gif" ? renderGif(scale, params) : renderImage(scale, format, params);
     if (copy) {
       const item = new ClipboardItem({ "image/png": image });
       await Promise.all([image, navigator.clipboard.write([item])]);
@@ -765,6 +1108,7 @@ async function outputArtwork(copy) {
   } finally {
     outputBusy = false;
     syncOutputControls();
+    if (settings.animate) queuePreview();
   }
 }
 
@@ -772,17 +1116,21 @@ exportButton.addEventListener("click", () => outputArtwork(false));
 copyButton.addEventListener("click", () => outputArtwork(true));
 
 try {
+  const showUntil = performance.now() + 450;
   const adapter = await navigator.gpu?.requestAdapter();
   if (!adapter) throw new Error("WebGPU is unavailable. Open asciix in a browser with WebGPU and graphics acceleration enabled.");
   device = await adapter.requestDevice();
   device.addEventListener("uncapturederror", ({ error }) => status(error.message, true));
   device.lost.then(({ message }) => {
     canRender = false;
+    loadNumber += 1;
+    closeGif();
     for (const control of controlInputs) control.disabled = true;
     get("open").disabled = get("sample").disabled = get("reset").disabled = true;
     syncControls();
-    syncOutputControls();
+    setImageLoading(false);
     status(message || "The graphics device stopped. Reload the page to try again.", true);
+    revealStudio();
   });
   after = resultCanvas.getContext("webgpu");
   after.configure({ device, format: navigator.gpu.getPreferredCanvasFormat(), alphaMode: "premultiplied" });
@@ -792,8 +1140,12 @@ try {
   for (const control of controlInputs) control.disabled = false;
   get("open").disabled = get("sample").disabled = get("reset").disabled = false;
   syncControls();
-  await loadImage(samples.portrait, "portrait", "portrait");
+  const [ready] = await Promise.all([loadImage(samples.portrait, "portrait", "portrait"), document.fonts.ready]);
+  const remaining = showUntil - performance.now();
+  if (ready && remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
 } catch (error) {
   syncOutputControls();
   status(error.message || "Could not start the preview.", true);
+} finally {
+  revealStudio();
 }

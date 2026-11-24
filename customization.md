@@ -15,20 +15,19 @@ Drag a numeric field sideways to adjust it or click to type an exact value. Pres
 | Image treatment | Adjust brightness, contrast, and midtones, then posterize, soften, sharpen, engrave, or isolate edges. Shift rows or wave the source inside its existing outline. |
 | Color and transparency | Use sampled source colors, spot colors, extracted swatches, or custom ink. Use the ink assignment grid to apply a named swatch to a specific mark and tone. |
 | Print finish | Set paper grain, color fringe, ordered dither, and a seed for repeatable variations. Set Color fringe to 0% for crisp single-color registration. |
-| Label | Add one line of printed text. Set its horizontal and vertical position as a percentage of the image and choose its alignment, size, ink, and backing opacity. It carries through PNG export. |
+| Animation | Turn on Animate to add Aura particles, Seed glyph changes, Heatwave row shifts, or a Cloth ripple. Control strength and loop length and export as GIF. |
 
 **Invert image** reverses source tones before glyph selection. **Invert colors** complements the rendered inks and paper while keeping the glyph pattern. **Transparent paper** removes the paper under the glyphs. **Remove source background** keys out bright or dark pixels and also removes any marks in those areas.
 
-The general tonal field accepts up to 128 characters. Each tone band accepts up to 64 and the artwork label accepts up to 96. Supported characters include printable ASCII, common block and line symbols, and Braille. A space makes an empty cell. Blank edge slots inherit the look. A space in an edge slot suppresses that mark.
+The general tonal field accepts up to 128 characters. Each tone band accepts up to 64. Supported characters include printable ASCII, common block and line symbols, and Braille. A space makes an empty cell. Blank edge slots inherit the look. A space in an edge slot suppresses that mark.
 
 Silhouette priority uses transparency or a background knockout to recognize the outside boundary. Interior detail controls the contribution of edges inside the source.
 
-## Extract and label inks
+## Extract and assign inks
 
 1. In **Color & alpha**, choose **Extract source palette** for 2–8 representative colors or **Extract dark, middle and light inks** for three luma bands. **Sample image colors** is the continuous per-cell mode. Palette extraction ignores transparent pixels. Use **Exclude keyed source colors** to omit pixels removed by the source background control.
 2. Edit a swatch name and lock its ink to keep that value while changing the source. Typing a valid hex value locks the swatch. Use **Extract adjusted source colors** to include the source inversion, brightness, contrast, and midtone adjustments in the color samples.
 3. In **Ink assignments**, pick a swatch for any intersection of tone and mark. Auto matches the source color or luma band. For example, assign a blue swatch to **Mid Contour** and charcoal to **Heavy Block**.
-4. In **Label**, enter a caption or specimen name and select one of the extracted inks or a separate label color. The label can draw over transparent paper.
 
 In the Figma source, swatch locks are entered as `Name=#RRGGBB` separated by newlines or `;`. The assignment property accepts 12 comma-separated values in light, middle, heavy order for type, contour, block, and dot. Use 0 for Auto or the swatch’s 1-based number.
 

@@ -6,8 +6,14 @@
   <meta name="theme-color" content="#171717">
   <meta name="description" content="Convert images into configurable ASCII prints and export them as PNG, WebP, or JPEG.">
   <title>asciix — Shader Lab</title>
+  <link rel="stylesheet" href="/src/loading.css">
 </head>
 <body>
+  <div id="startup-loader" class="loading-screen loading-screen--startup" data-active>
+    <p id="startup-message" class="loading-message loading-message--pending" role="status">Loading…</p>
+    <noscript><p class="loading-message">Enable JavaScript to use asciix.</p></noscript>
+  </div>
+
   <svg class="icon-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <symbol id="icon-github" viewBox="0 0 16 16">
       <path fill="currentColor" d="M8 0a8 8 0 0 0-2.53 15.59c.4.08.55-.17.55-.38v-1.49c-2.23.48-2.7-.95-2.7-.95-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.22.82 1.22.82.72 1.22 1.88.87 2.34.66.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.88.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.51.56.82 1.27.82 2.15 0 3.08-1.87 3.75-3.66 3.95.29.25.55.73.55 1.48v2.22c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/>
@@ -35,7 +41,7 @@
     </symbol>
   </svg>
 
-  <header class="masthead">
+  <header class="masthead" inert>
     <div class="brand-row">
       <div class="brand">
         <h1>asciix</h1>
@@ -60,7 +66,7 @@
     </div>
   </header>
 
-  <main class="studio">
+  <main class="studio" inert>
     <section class="workspace" aria-label="Image workspace">
       <section class="preview panel" aria-label="Image preview">
         <div class="preview-head">
@@ -74,12 +80,14 @@
           </div>
           <div class="preview-actions">
             <span id="current-style" class="look-badge">Mixed ASCII</span>
+            <button id="gif-playback" class="button" type="button" hidden>Play GIF</button>
             <button id="copy" class="button copy" type="button" aria-label="Copy artwork as PNG" title="Copy artwork as PNG" disabled>
               <svg class="icon" aria-hidden="true"><use href="#icon-copy"/></svg> Copy
             </button>
           </div>
         </div>
-        <div class="view-area">
+        <div id="view-area" class="view-area" role="region" tabindex="0" aria-label="Artwork navigation" aria-describedby="view-keys">
+          <span id="view-keys" class="view-keys">Drag or use W A S D to pan. Scroll, pinch, or use plus and minus to zoom. Press zero to reset.</span>
           <span id="edge-tag" class="stage-tag edge-tag">EDGE // 60%</span>
           <div id="artwork" class="artwork">
             <div id="preview-panel" role="tabpanel" aria-labelledby="view-preview" class="artwork-panel" tabindex="0">
@@ -93,6 +101,15 @@
             </figure>
           </div>
           <span id="grid-tag" class="stage-tag grid-tag">76 COL // GLYPH</span>
+          <div class="view-nav" role="group" aria-label="Zoom controls">
+            <button type="button" class="button" data-view-out aria-label="Zoom out">−</button>
+            <button type="button" class="button" data-view-reset aria-label="Reset pan and zoom" title="Reset pan and zoom">100%</button>
+            <button type="button" class="button" data-view-in aria-label="Zoom in">+</button>
+          </div>
+          <div id="image-loader" class="loading-screen loading-screen--image" aria-hidden="true">
+            <p class="loading-message loading-message--pending">Loading image…</p>
+          </div>
+          <div class="drop-hint" aria-hidden="true">Drop image to open</div>
         </div>
         <div class="preview-meta">
           <div class="tone-line">Tone ramp <span id="tone-ramp"></span></div>
@@ -132,6 +149,7 @@
                 <option value="png">PNG</option>
                 <option value="webp">WebP</option>
                 <option value="jpeg">JPEG</option>
+                <option value="gif" hidden>GIF</option>
               </select>
               <select id="export-scale" aria-label="Export scale" disabled>
                 <option value="0.5">0.5X</option>
@@ -153,7 +171,7 @@
         </header>
         <div class="input-controls">
           <div class="field choice">
-            <label for="sample">Sample image</label>
+            <label for="sample">Image</label>
             <select id="sample" disabled>
               <option value="portrait">Portrait — Sally Ride (NASA)</option>
               <option value="icon">Transparent icon</option>
@@ -177,7 +195,7 @@
           <button id="group-image-treatment" type="button" role="tab" aria-controls="image-treatment" aria-selected="true">Image</button>
           <button id="group-color-controls" type="button" role="tab" aria-controls="color-controls" aria-selected="false" tabindex="-1">Color &amp; alpha</button>
           <button id="group-print-finish" type="button" role="tab" aria-controls="print-finish" aria-selected="false" tabindex="-1">Print finish</button>
-          <button id="group-label-controls" type="button" role="tab" aria-controls="label-controls" aria-selected="false" tabindex="-1">Label</button>
+          <button id="group-animation-controls" type="button" role="tab" aria-controls="animation-controls" aria-selected="false" tabindex="-1" disabled>Animation</button>
         </div>
         <div id="parameter-body" class="parameter-body">
           <section id="characters" class="group-body" role="tabpanel" aria-labelledby="group-characters" hidden></section>
@@ -185,7 +203,7 @@
           <section id="image-treatment" class="group-body" role="tabpanel" aria-labelledby="group-image-treatment"></section>
           <section id="color-controls" class="group-body" role="tabpanel" aria-labelledby="group-color-controls" hidden></section>
           <section id="print-finish" class="group-body" role="tabpanel" aria-labelledby="group-print-finish" hidden></section>
-          <section id="label-controls" class="group-body" role="tabpanel" aria-labelledby="group-label-controls" hidden></section>
+          <section id="animation-controls" class="group-body" role="tabpanel" aria-labelledby="group-animation-controls" hidden></section>
         </div>
         <footer class="parameter-footer">
           <button id="reset" class="quiet" type="button" disabled>
@@ -196,6 +214,16 @@
       </section>
     </aside>
   </main>
+  <script>
+    window.addEventListener("error", (event) => {
+      const loader = document.getElementById("startup-loader");
+      if (loader.hasAttribute("data-active") && event.target instanceof HTMLScriptElement) {
+        const message = document.getElementById("startup-message");
+        message.classList.remove("loading-message--pending");
+        message.textContent = "Could not load asciix. Reload the page to try again.";
+      }
+    }, true);
+  </script>
   <script type="module" src="/src/studio.js"></script>
 </body>
 </html>

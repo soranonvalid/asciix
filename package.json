@@ -11,6 +11,7 @@
   "dependencies": {
     "@fontsource/dm-sans": "^5.2.0",
     "@fontsource/ibm-plex-mono": "^5.2.0",
+    "gifenc": "1.0.3",
     "motion": "^14.14.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
