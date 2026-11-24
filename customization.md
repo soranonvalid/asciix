@@ -2,7 +2,9 @@
 
 Start with **Mixed ASCII** or pick a look for its initial character grid and ink. Character fields, mark mixes, image settings, and custom colors can be edited together. **Edit starter set** copies the current look’s characters into the editable field.
 
-Mixed ASCII uses terminal bitmap characters and defaults to 76 columns for more readable type. Drag **Columns** or type an exact count for finer or larger characters.
+Mixed ASCII uses terminal bitmap characters and defaults to 76 columns for more readable type. In the browser, its default palette puts pale glyphs on charcoal paper. Choose **Custom ink and paper** in **Color & alpha** to set your own colors.
+
+Drag a numeric field sideways to adjust it or click to type an exact value. Press Enter to apply a typed value or Escape to discard it. Up and Down move one step. Hold Shift while dragging or pressing an arrow key to move in steps of ten.
 
 ## Control groups
 
