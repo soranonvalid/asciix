@@ -1,4 +1,4 @@
-# asciix · Shader Lab
+# asciix | WGSL
 
 Give a photograph to a handful of punctuation marks and see how well they remember the face. In asciix, a period can be a highlight, a slash can trace a jawline, and a whole crowd of `@`s can stand in for a shadow.
 
