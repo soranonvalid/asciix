@@ -6,7 +6,7 @@
 
 - **In the browser** · Run `npm ci` and `npm run dev`. Open Vite’s URL, then drop an image anywhere in the studio or click **Open image**. Use **Preview** and **Source** to compare.
 - **In Figma** · For editable controls, copy the entire [Figma shader entry](main.ts) into the custom shader editor and apply the effect to an image layer. For a finished print, use **Copy** in the studio and paste the PNG onto your canvas.
-- **In WebGL 2** · Click **↓ GLSL** in the studio header or open the [fragment shader](public/shaders/ascii.frag.glsl). The integration below draws its eight-glyph ramp in one pass.
+- **In WebGL 2** · Use **↓ GLSL** and **↓ JS** in the studio header to get the full renderer. [Embed the GLSL shader](#embed-the-glsl-shader)
 
 ## Six small experiments
 
@@ -34,6 +34,8 @@ Turn on **Animate** next to the image toggles, then open **Animation**. Pick an 
 
 For **Aura**, **Heatwave**, and **Cloth**, drag the comet to aim the effect. The center gives zero strength and the outer ring gives 100%. Enter an exact **Angle** or **Strength** in the fields below it. Angles are clockwise from the right.
 
+Turn on **Multiple directions** in **Heatwave** or **Cloth** to aim two comets at once. Try **Angle 1** at `0°` and **Angle 2** at `90°` to mix horizontal and vertical sway. Both directions share the same **Strength** and **Loop length**.
+
 Drag in **Preview** or **Source** to pan. Scroll or pinch to zoom. With the image area focused, use **WASD** or the arrow keys to pan, **+** and **−** to zoom, and **0** to reset. Click the zoom percentage to reset by touch or mouse. Both views share the same position and zoom.
 
 Select **GIF** in **Export Pipe** for a looping animation. A still image exports at 20 frames per second. For an uploaded GIF, export retains the source timing and loop count. With **Animate** on, whole effect cycles fit inside the source loop. **Pause GIF** pauses the uploaded source frames.
@@ -50,7 +52,87 @@ PNG, WebP, JPEG, and **Copy** capture the current preview frame. GIF export uses
 
 ## Embed the GLSL shader
 
-In a Vite app, save the [fragment file](public/shaders/ascii.frag.glsl) beside your JavaScript and import it as text:
+Keep `ascii.frag.glsl` and `ascii-webgl.js` in the same folder and serve them over HTTP. The host fetches the shader, compiles its GLSL ES 3.00 passes, and draws into a dedicated WebGL 2 canvas. [Fragment shader](public/shaders/ascii.frag.glsl) · [JavaScript host](public/shaders/ascii-webgl.js)
+
+### Draw a still
+
+Add a `<canvas>` to your page and run this in a JavaScript module. The image URL should be local or allow cross-origin use.
+
+```js
+import { createAsciiRenderer } from './ascii-webgl.js'
+
+const canvas = document.querySelector('canvas')
+const image = new Image()
+image.crossOrigin = 'anonymous'
+image.src = './photo.png'
+await image.decode()
+canvas.width = image.naturalWidth
+canvas.height = image.naturalHeight
+
+const renderer = await createAsciiRenderer(canvas)
+renderer.setSource(image)
+const settings = {
+  columns: 64,
+  glyphs: ' .:oO#@',
+  contour: 70,
+  palette: 2, // Sample image colors
+  colorMix: 100,
+  transparentPaper: true,
+}
+renderer.draw(settings)
+```
+
+`draw()` accepts any of the shader properties in `main.ts`. It fills in omitted values from `asciiDefaults`, exported by the JavaScript host. Colors use `{ r, g, b, a }` with channels between `0` and `1`. [Property names, ranges, and choices](main.ts#L1347) · [Control reference and recipes](customization.md)
+
+For the studio’s white-on-dark Mixed ASCII look, set `style: 0`, `palette: 1`, and `polarity: 1`. Use RGB `0.98` for all three ink channels and `23 / 255` for all three paper channels.
+
+### Use extracted inks
+
+Use `palette: 7` for a source palette or `palette: 8` for three tonal inks. For example, lock the first ink to blue and assign it to midtone contours.
+
+```js
+renderer.draw({
+  ...settings,
+  palette: 7,
+  swatchCount: 3,
+  swatches: 'Blueprint=#2457D6',
+  inkRules: '0,0,0,0,1,0',
+})
+const swatches = renderer.readPalette() // [{ sourceColor: [r,g,b,a], ink: [r,g,b,a] }, …]
+```
+
+### Animate or supply video frames
+
+Pass motion as the second argument to `draw()`. The `phase` advances from `0` to `1` per loop, `strength` runs from `0` to `1`, and `angle` is measured clockwise in degrees from the right. For Heatwave and Cloth, pass an optional `secondaryAngle` in degrees to combine two directions at the same strength.
+
+| `effect` | Motion |
+| --- | --- |
+| `0` | Still frame |
+| `1` | Aura. Set `particle` to `0` for streaks, `1` for dots, `2` for blocks, or `3` for characters. |
+| `2` | Seed selects glyphs of similar ink density from the active character bank. |
+| `3` | Heatwave shifts source-image samples before the ASCII analysis. |
+| `4` | Cloth bends source-image samples around a pinned edge before the ASCII analysis. |
+
+```js
+const start = performance.now()
+function paint(now) {
+  renderer.draw(settings, {
+    effect: 4,
+    phase: ((now - start) / 3000) % 1,
+    strength: 0.65,
+    angle: 45,
+    secondaryAngle: 135,
+  })
+  requestAnimationFrame(paint)
+}
+requestAnimationFrame(paint)
+```
+
+For video or GIF input, decode frames in your app and call `setSource(frame)` before `draw()`. To export an animation, draw each frame at its chosen phase and pass the canvas pixels to your encoder. Call `renderer.dispose()` after the last draw to release its WebGL resources.
+
+### One-pass GLSL entry point
+
+Compile the fragment file without defining `ASCIIX_PASS` to use the original `uImage`, `uResolution`, `uColumns`, and ink and paper uniforms. In a Vite app, import a local copy of the file as text.
 
 ```js
 import fragmentSource from './ascii.frag.glsl?raw'
@@ -86,5 +168,3 @@ gl.drawArrays(gl.TRIANGLES, 0, 3)
 ```
 
 Set `uTransparentPaper`, `uInvertImage`, or `uInvertColors` with `gl.uniform1i(uniform('uTransparentPaper'), 1)`, substituting the desired name, then draw again. For a transparent canvas use an alpha-enabled, premultiplied WebGL context. Match the drawing buffer’s aspect ratio to your source and orient the texture with its bottom row at UV y = 0.
-
-For the studio’s complete implementation, follow `setup(device, frame)` and `render(device, frame)` in [main.ts](main.ts). The [studio host](src/studio.js) shows how to supply the input texture, output texture, persistent state, and property values.

@@ -126,7 +126,7 @@ export function setup(device, frame) {
       captionInk: vec4f,
       captionBacking: vec4f,
       motion: vec4f, // Effect, loop phase, strength, angle in degrees
-      particles: vec4f, // Aura particle shape
+      particles: vec4f, // Aura particle shape, second wave angle, second wave enabled
     }
 
     struct Cell {
@@ -967,12 +967,9 @@ export function setup(device, frame) {
       return filtered * sourceAlpha;
     }
 
-    fn motionSourceUV(uv: vec2f) -> vec2f {
-      let effect = settings.motion.x;
-      if (effect < 3.0) { return uv; }
-      let phase = TURN * fract(settings.motion.y);
+    fn waveOffset(uv: vec2f, heading: f32, effect: f32, phase: f32) -> vec2f {
       let strength = settings.motion.z;
-      let angle = TURN * settings.motion.w / 360.0;
+      let angle = TURN * heading / 360.0;
       let direction = vec2f(cos(angle), sin(angle));
       let across = vec2f(-direction.y, direction.x);
       let edge = smoothstep(vec2f(0.0), vec2f(0.13), min(uv, 1.0 - uv));
@@ -983,15 +980,26 @@ export function setup(device, frame) {
       if (effect == 3.0) {
         let shift = sin(row * 28.0 + 5.0 * sin(column * 8.0) - phase)
           + 0.25 * cos(column * 20.0 + row * 12.0 + 2.0 * phase);
-        let offset = direction * cellUV * (boundary * shift * strength * 1.45);
-        return clamp(uv + offset, vec2f(0.0), vec2f(1.0));
+        return direction * cellUV * (boundary * shift * strength * 1.45);
       }
       let anchor = dot(uv, abs(across));
       let slack = smoothstep(0.01, 0.9, anchor) * strength;
       let ripple = TURN * (1.25 * column + 1.65 * row) - phase;
       let shift = sin(ripple) + 0.28 * sin(row * 8.0 + phase * 2.0);
-      let offset = direction * cellUV * (boundary * shift * slack * 2.6);
-      return clamp(uv + offset, vec2f(0.0), vec2f(1.0));
+      return direction * cellUV * (boundary * shift * slack * 2.6);
+    }
+
+    fn motionSourceUV(uv: vec2f) -> vec2f {
+      let effect = settings.motion.x;
+      if (effect < 3.0) { return uv; }
+      let phase = TURN * fract(settings.motion.y);
+      let count = select(1u, 2u, settings.particles.z > 0.5);
+      var offset = vec2f(0.0);
+      for (var i = 0u; i < count; i++) {
+        let heading = select(settings.motion.w, settings.particles.y, i == 1u);
+        offset += waveOffset(uv, heading, effect, phase);
+      }
+      return clamp(uv + offset / f32(count), vec2f(0.0), vec2f(1.0));
     }
 
     fn drawAura(pixel: vec2f) -> vec4f {
@@ -1133,7 +1141,7 @@ export function render(device, frame) {
 
   const props = frame.params;
   const { effect = 0, phase = 0, strength = 0, particle = 0, direction = 0,
-    angle = effect === 1 ? 38 : ([0, 90, 45][direction] ?? 0) } = frame.motion ?? {};
+    angle = effect === 1 ? 38 : ([0, 90, 45][direction] ?? 0), secondaryAngle } = frame.motion ?? {};
   const style = Math.max(0, Math.min(10, Math.round(props.style)));
   const columns = Math.max(24, Math.min(240, Math.round(props.columns)));
   const cellWidth = output.width / columns;
@@ -1272,7 +1280,7 @@ export function render(device, frame) {
     props.labelColor.r, props.labelColor.g, props.labelColor.b, props.labelColor.a ?? 1,
     props.labelBacking.r, props.labelBacking.g, props.labelBacking.b, props.labelBacking.a ?? 0,
     effect, phase, strength, angle,
-    particle, 0, 0, 0,
+    particle, secondaryAngle ?? 0, Number(secondaryAngle != null), 0,
   ]));
   const shared = [
     { binding: 0, resource: { buffer: state.uniforms } },

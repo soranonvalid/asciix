@@ -1,10 +1,10 @@
-# asciix | WGSL
+# asciix | WGSL and GLSL
 
 Give a photograph to a handful of punctuation marks and see how well they remember the face. In asciix, a period can be a highlight, a slash can trace a jawline, and a whole crowd of `@`s can stand in for a shadow.
 
 **asciix Studio is a web-based rendering tool.** Open an image in your browser, adjust the ASCII effect, and export the rendered artwork. The studio uses WebGPU to run the full shader and can copy a rendered PNG for pasting into Figma. [Open the web studio](https://soranonvalid.github.io/asciix/)
 
-**The shader is available separately.** Download the standalone `ascii.frag.glsl` file for WebGL 2 from the shader release. The full WGSL effect used by the studio and Figma is embedded in [`main.ts`](main.ts), also available in the release’s source archive. [Get the shader from GitHub Releases](https://github.com/soranonvalid/asciix/releases/tag/shader)
+**The shader is available separately.** The studio and Figma run the WGSL implementation in `main.ts`. The GLSL ES 3.00 version runs the same rendering features in WebGL 2. Download the fragment shader and its JavaScript host together to use the full effect. [GLSL setup and examples](instructions.md#embed-the-glsl-shader)
 
 ## Grab the shader
 
@@ -12,9 +12,9 @@ Give a photograph to a handful of punctuation marks and see how well they rememb
 | --- | --- |
 | Use the complete effect in Figma’s custom shader editor | [Standalone Figma source · main.ts](main.ts). Copy the whole file, including the property definitions at the end. |
 | Study or change the production WebGPU renderer | [Shared WebGPU implementation](main.ts). Find `extractPalette` for ink selection, `userGlyph` for tone mapping, and `fs_main` for the final composite. The GPU code embedded here is **WGSL**. |
-| Put a small ASCII shader into a WebGL 2 project | [Download the GLSL fragment shader](public/shaders/ascii.frag.glsl), also available from **↓ GLSL** in the studio header. This one-pass edition has eight bitmap marks, column count, two colors, independent inversions, and transparent paper. |
+| Use the full effect in a WebGL 2 project | [GLSL fragment shader](public/shaders/ascii.frag.glsl) and [JavaScript host](public/shaders/ascii-webgl.js). In the studio header, use **↓ GLSL** and **↓ JS**. |
 
-The full renderer adds contour analysis, editable glyph sets, layered marks, extracted inks, print treatments, and captions. The [instructions and recipes](instructions.md) cover both the studio and the GLSL example.
+Both shader versions support editable glyph sets, contours, layered marks, extracted inks, alpha keying, print treatments, captions, and the four motion effects. The [instructions and recipes](instructions.md) give examples for the studio and the GLSL host.
 
 ## Make your first print
 
@@ -84,13 +84,14 @@ flowchart LR
 | Ink routing | Cells can use sampled image colors or extracted swatches. Named swatches can be assigned by tone and mark type. | Assign a blue swatch to **Mid Contour** and leave the other assignments on **Auto**. |
 | Compositing | The drawing pass turns each mark into pixel coverage, then layers ink, paper, and an optional caption. | Enable **Transparent paper** and export PNG or WebP to preserve alpha. |
 
-**Invert image** changes the source tones the shader uses to select marks. **Invert colors** complements the final composite while preserving its alpha and the mark pattern. Both diagrams describe the full WGSL renderer. The standalone GLSL download samples one point per cell and maps its brightness to an eight-mark bitmap ramp in a single fragment pass. [Full WGSL source](main.ts) · [Standalone GLSL source](public/shaders/ascii.frag.glsl)
+**Invert image** changes the source tones the shader uses to select marks. **Invert colors** complements the final composite while preserving its alpha and mark pattern. The GLSL renderer uses fragment passes and integer textures for the intermediate data. The same GLSL file also has a small one-pass entry point with the original eight-glyph ramp. [WGSL source](main.ts) · [GLSL source](public/shaders/ascii.frag.glsl) · [One-pass example](instructions.md#one-pass-glsl-entry-point)
 
 ## Around the workbench
 
 - [Instructions](instructions.md) · short recipes, Figma setup, and GLSL implementation.
 - [Control reference](customization.md) · tone bands, directional glyph slots, palette assignments, and all ten reference treatments.
 - [Studio host](src/studio.js) · image upload, WebGPU setup, preview, and image export.
-- [Standalone fragment shader](public/shaders/ascii.frag.glsl) · readable GLSL ES 3.00 with the glyph bitmaps included.
+- [GLSL fragment shader](public/shaders/ascii.frag.glsl) · GLSL ES 3.00 with the glyph bitmaps, cell analysis, and compositing code.
+- [WebGL 2 host](public/shaders/ascii-webgl.js) · loads images or frames, supplies settings, runs the fragment passes, and reads back extracted colors.
 
 The demo portrait is courtesy of [NASA](https://www.nasa.gov/wp-content/uploads/2022/11/sally_ride.jpg). The full shader uses public-domain VGA bitmaps from [Daniel Hepper’s font8x8](https://github.com/dhepper/font8x8).

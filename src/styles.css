@@ -92,6 +92,7 @@ h1, h2, dl, dd, figure, p { margin: 0; }
   letter-spacing: -.085em;
 }
 
+.shader-downloads { display: grid; gap: 2px; }
 .shader-download, .source-dim > span { color: var(--muted); }
 .shader-download:hover, .shader-download:focus-visible { color: white; }
 
@@ -541,6 +542,9 @@ input[type="color"] {
 }
 
 .key-help, .glyph-help { color: var(--muted); font-size: 11px; line-height: 1.45; }
+
+.motion-directions, .motion-direction { display: grid; gap: 8px; min-width: 0; }
+.motion-directions[data-multiple] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 .comet-control {
   display: grid;

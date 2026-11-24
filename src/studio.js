@@ -38,6 +38,8 @@ const properties = {
     ],
   },
   motionAngle: { type: "number", label: "Angle", control: "slider", min: 0, max: 359, step: 1, defaultValue: 0, suffix: "°" },
+  multiDirection: { type: "boolean", label: "Multiple directions", defaultValue: false },
+  secondaryAngle: { type: "number", label: "Angle 2", control: "slider", min: 0, max: 359, step: 1, defaultValue: 90, suffix: "°" },
   auraAngle: { type: "number", label: "Angle", control: "slider", min: 0, max: 359, step: 1, defaultValue: 38, suffix: "°" },
 };
 const motionFrameMs = 50;
@@ -126,6 +128,7 @@ function motionAt(phase, params = settings) {
   return {
     effect: params.animationEffect, phase, strength: params.animationStrength * 0.01,
     particle: params.auraShape, angle: params.animationEffect === 1 ? params.auraAngle : params.motionAngle,
+    secondaryAngle: params.multiDirection && params.animationEffect >= 3 ? params.secondaryAngle : undefined,
   };
 }
 
@@ -580,16 +583,27 @@ for (const key of ["ink", "accentOne", "accentTwo", "paper"]) {
 addFields(get("color-controls"), ["sourceKey", "keyThreshold", "keySoftness"]);
 addFields(get("print-finish"), ["texture", "registration", "dither", "seed"]);
 const animationGroup = get("animation-controls");
-addFields(animationGroup, ["animationEffect"]);
+addFields(animationGroup, ["animationEffect", "multiDirection"]);
 const effectHelp = element("p", { id: "animation-help", className: "key-help" });
 fields.animationEffect.field.after(effectHelp);
-const comet = createCometControl((angle, strength) => {
-  settings[settings.animationEffect === 1 ? "auraAngle" : "motionAngle"] = angle;
+fields.multiDirection.field.title = "Add a second angle with the same strength.";
+
+function aimDirection(key, angle, strength) {
+  settings[key] = angle;
   settings.animationStrength = strength;
   controlsChanged();
-});
-animationGroup.append(comet.field);
-addFields(animationGroup, ["motionAngle", "auraAngle", "animationStrength", "animationDuration", "auraShape"]);
+}
+
+const comet = createCometControl((angle, strength) =>
+  aimDirection(settings.animationEffect === 1 ? "auraAngle" : "motionAngle", angle, strength));
+const secondComet = createCometControl((angle, strength) => aimDirection("secondaryAngle", angle, strength));
+const firstDirection = element("div", { className: "motion-direction" }, comet.field);
+const secondDirection = element("div", { className: "motion-direction" }, secondComet.field);
+addFields(firstDirection, ["motionAngle", "auraAngle"]);
+addFields(secondDirection, ["secondaryAngle"]);
+const directions = element("div", { className: "motion-directions" }, firstDirection, secondDirection);
+animationGroup.append(directions);
+addFields(animationGroup, ["animationStrength", "animationDuration", "auraShape"]);
 
 const paletteTools = element("div", { className: "palette-tools" });
 const swatchList = element("div", { className: "palette-swatches" });
@@ -809,6 +823,8 @@ function syncReadouts() {
 }
 
 function syncControls() {
+  const wave = settings.animationEffect >= 3;
+  const multiple = wave && settings.multiDirection;
   const starters = state.starterGlyphs;
   const supported = Array.from(settings.glyphs, (character) => state.encodeGlyph?.(character));
   const skipped = supported.filter((glyph) => glyph == null).length;
@@ -823,7 +839,8 @@ function syncControls() {
   });
   for (const [key, { control, scrub, toggle }] of Object.entries(fields)) {
     const value = settings[key];
-    if (scrub) scrub.sync(value, undefined, key === "bandLight" ? Math.min(properties[key].max, settings.bandHeavy - 1) : undefined);
+    if (scrub) scrub.sync(value, multiple && key === "motionAngle" ? "Angle 1" : undefined,
+      key === "bandLight" ? Math.min(properties[key].max, settings.bandHeavy - 1) : undefined);
     else if (toggle) toggle.sync(value);
     else if (control.value !== String(value)) control.value = value;
   }
@@ -833,10 +850,14 @@ function syncControls() {
   }
   effectHelp.textContent = effectDescriptions[settings.animationEffect - 1];
   fields.auraShape.field.hidden = settings.animationEffect !== 1;
-  comet.field.hidden = settings.animationEffect === 2;
-  fields.motionAngle.field.hidden = settings.animationEffect < 3;
+  directions.hidden = settings.animationEffect === 2;
+  directions.toggleAttribute("data-multiple", multiple);
+  fields.multiDirection.field.hidden = !wave;
+  secondDirection.hidden = !multiple;
+  fields.motionAngle.field.hidden = !wave;
   fields.auraAngle.field.hidden = settings.animationEffect !== 1;
-  if (!comet.field.hidden) comet.sync(settings.animationEffect === 1 ? settings.auraAngle : settings.motionAngle, settings.animationStrength);
+  if (!directions.hidden) comet.sync(wave ? settings.motionAngle : settings.auraAngle, settings.animationStrength);
+  if (multiple) secondComet.sync(settings.secondaryAngle, settings.animationStrength);
   fields.detailAmount.field.hidden = settings.detail === 0;
   fields.warpAmount.field.hidden = settings.warp === 0;
   bandFields.hidden = settings.mixByTone !== 3;
