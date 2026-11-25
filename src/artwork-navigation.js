@@ -133,6 +133,5 @@ export function createArtworkNavigation(stage, artwork, redraw) {
   new ResizeObserver(() => move(view)).observe(stage);
   return {
     reset() { move(home); },
-    get zoom() { return view.zoom; },
   };
 }

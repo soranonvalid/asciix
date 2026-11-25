@@ -55,6 +55,7 @@ const resultCanvas = get("result");
 const artwork = get("artwork");
 const viewArea = get("view-area");
 const previewPanel = get("preview-panel");
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const navigation = createArtworkNavigation(viewArea, artwork, scheduleDraw);
 const exportFormat = get("export-format");
 const exportScale = get("export-scale");
@@ -84,9 +85,10 @@ let sourceName = "portrait";
 let activeSample = "portrait";
 let pendingDraw = 0;
 let previewDirty = false;
-let backdropTimer;
 let sampleBackdrop = false;
 let backdropSample;
+let renderedTransparentPaper = false;
+let paperFade;
 let motionDrawing = false;
 let motionStarted = 0;
 let nextMotionFrame = 0;
@@ -110,6 +112,7 @@ function revealStudio() {
 }
 
 function setImageLoading(active) {
+  if (active) clearPaperFade();
   loadingImage = active;
   imageLoader.toggleAttribute("data-active", active && !startupLoader.hasAttribute("data-active"));
   imageLoader.parentElement.setAttribute("aria-busy", String(active));
@@ -139,14 +142,9 @@ function motionAt(phase, params = settings) {
 
 const maxRasterSide = () => Math.min(device.limits.maxTextureDimension2D, 4096);
 
-function scheduleBackdropUpdate() {
-  clearTimeout(backdropTimer);
-  sampleBackdrop = false;
-  if (!previewPanel.hasAttribute("data-transparent-paper")) return;
-  backdropTimer = setTimeout(() => {
-    sampleBackdrop = true;
-    scheduleDraw();
-  }, 120);
+function requestBackdropSample() {
+  sampleBackdrop = settings.transparentPaper;
+  if (!sampleBackdrop && previewPanel.hidden) viewArea.removeAttribute("data-light-backdrop");
 }
 
 function updatePreviewBackdrop() {
@@ -173,7 +171,32 @@ function updatePreviewBackdrop() {
     const luminance = 0.2126 * linear(data[i]) + 0.7152 * linear(data[i + 1]) + 0.0722 * linear(data[i + 2]);
     balance += alpha * (Math.log(luminance + 0.05) - midpoint);
   }
-  viewArea.style.setProperty("--preview-backdrop", balance < 0 ? "#f4f4f4" : "#171717");
+  viewArea.toggleAttribute("data-light-backdrop", balance < 0);
+}
+
+function clearPaperFade() {
+  const layer = paperFade;
+  paperFade = undefined;
+  layer?.remove();
+}
+
+function fadePreviewPaper() {
+  const layer = element("canvas", {
+    className: "preview-paper-fade", width: resultCanvas.width, height: resultCanvas.height,
+  });
+  const context = layer.getContext("2d");
+  if (!context) return;
+  layer.setAttribute("aria-hidden", "true");
+  context.drawImage(resultCanvas, 0, 0);
+  function finish() {
+    if (paperFade !== layer) return;
+    clearPaperFade();
+    queuePreview();
+  }
+  layer.addEventListener("animationend", finish, { once: true });
+  layer.addEventListener("animationcancel", finish, { once: true });
+  previewPanel.append(layer);
+  paperFade = layer;
 }
 
 function paint(updatePalette = true) {
@@ -181,16 +204,25 @@ function paint(updatePalette = true) {
   const size = artwork.getBoundingClientRect();
   if (!size.width || !size.height) return;
   // A matching backing grid avoids resampling the glyphs a second time.
-  const pixelScale = Math.min(devicePixelRatio * Math.min(1, 2 / navigation.zoom),
-    maxRasterSide() / Math.max(size.width, size.height));
+  const pixelScale = Math.min(devicePixelRatio, maxRasterSide() / Math.max(size.width, size.height));
   const width = Math.max(1, Math.round(size.width * pixelScale));
   const height = Math.max(1, Math.round(size.height * pixelScale));
   if (resultCanvas.width !== width) resultCanvas.width = width;
   if (resultCanvas.height !== height) resultCanvas.height = height;
   const start = performance.now();
-  render(device, { input, output: after.getCurrentTexture(), state, params: renderParams(), motion: motionAt(previewPhase) });
+  const params = renderParams();
+  const frame = { input, output: after.getCurrentTexture(), state, params, motion: motionAt(previewPhase, params) };
+  if (params.transparentPaper && !renderedTransparentPaper && !previewPanel.hidden && !reducedMotion.matches) {
+    // Retain the opaque frame as the backdrop brightens behind dark ink.
+    render(device, { ...frame, params: { ...params, transparentPaper: false } });
+    fadePreviewPaper();
+  }
+  render(device, frame);
+  renderedTransparentPaper = params.transparentPaper;
   get("render-time").textContent = "// " + (performance.now() - start).toFixed(1) + " MS";
-  if (sampleBackdrop && !previewPanel.hidden) {
+  if (!settings.transparentPaper) {
+    viewArea.removeAttribute("data-light-backdrop");
+  } else if (sampleBackdrop && !previewPanel.hidden) {
     sampleBackdrop = false;
     // Sample the current frame before WebGPU presents and releases it.
     updatePreviewBackdrop();
@@ -203,7 +235,7 @@ function previewVisible() {
 }
 
 function queuePreview() {
-  if (pendingDraw || motionDrawing || !previewVisible()) return;
+  if (pendingDraw || motionDrawing || paperFade || !previewVisible()) return;
   pendingDraw = requestAnimationFrame((now) => {
     pendingDraw = 0;
     if (!previewVisible()) return;
@@ -374,12 +406,12 @@ async function loadImage(src, name, sample = "custom") {
     if (exportScale.selectedOptions[0].disabled) exportScale.value = "1";
     exportScale.title = "Scales above " + limit + " pixels on the longest side are disabled";
     syncOutputControls();
-    scheduleBackdropUpdate();
+    requestBackdropSample();
     paint();
     const installedAnimation = animation;
     await device.queue.onSubmittedWorkDone();
     if (canRender && installedAnimation && animation === installedAnimation &&
-        !matchMedia("(prefers-reduced-motion: reduce)").matches) playGif();
+        !reducedMotion.matches) playGif();
     if (request !== loadNumber || !canRender) return false;
     if (animated) {
       status(animation.frameCount + " GIF frames" + (factor < 1 ? " · resized to " + width + " × " + height + " px" : ""));
@@ -836,8 +868,6 @@ function syncReadouts() {
   get("contour-readout").textContent = settings.contour + "%";
   get("dither-readout").textContent = settings.dither + "%";
   get("finish-readout").textContent = settings.texture + "%";
-  previewPanel.toggleAttribute("data-transparent-paper", settings.transparentPaper ||
-    (settings.palette !== 0 && settings.palette !== 3 && settings.paper.a < 1));
   if (!state.starterGlyphs) return;
 
   const encode = settings.style === 0 ? state.encodeTypeGlyph : state.encodeGlyph;
@@ -932,6 +962,7 @@ function syncControls() {
 }
 
 function controlsChanged() {
+  clearPaperFade();
   settings.bandLight = Math.min(settings.bandLight, settings.bandHeavy - 1);
   if (settings.animate && !wasAnimating) {
     motionStarted = performance.now();
@@ -941,7 +972,7 @@ function controlsChanged() {
   }
   wasAnimating = settings.animate;
   syncControls();
-  scheduleBackdropUpdate();
+  requestBackdropSample();
   syncOutputControls();
   scheduleDraw();
 }

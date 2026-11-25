@@ -12,7 +12,8 @@ export async function openGif(blob) {
 }
 
 export async function fitImage(image, width, height) {
-  if ((image.displayWidth ?? image.width) === width && (image.displayHeight ?? image.height) === height) return image;
+  // Some browsers require an ImageBitmap for WebGPU uploads of decoded GIF frames.
+  if (image instanceof ImageBitmap && image.width === width && image.height === height) return image;
   try {
     return await createImageBitmap(image, { resizeWidth: width, resizeHeight: height, resizeQuality: "high" });
   } finally {

@@ -244,6 +244,8 @@ h1, h2, dl, dd, figure, p { margin: 0; }
 }
 
 .view-area {
+  --preview-surface: var(--stage);
+  --preview-fade-time: 240ms;
   position: relative;
   display: grid;
   place-items: center;
@@ -292,15 +294,42 @@ body[data-file-drag] .drop-hint {
   background: repeating-conic-gradient(#282828 0% 25%, #202020 0% 50%) 0 0 / 14px 14px;
 }
 
-.view-area:has(#preview-panel:not([hidden])) {
-  --preview-surface: var(--stage);
+.view-area:has(#preview-panel:not([hidden])) { isolation: isolate; }
+
+.view-area:has(#preview-panel:not([hidden])),
+.view-area:has(#preview-panel:not([hidden]))::before {
   background-color: var(--preview-surface);
   background-image: radial-gradient(circle, color-mix(in srgb, var(--preview-surface) 76%, #888) 0.8px, transparent 1.25px);
   background-size: 16px 16px;
 }
 
-.view-area:has(#preview-panel[data-transparent-paper]:not([hidden])) {
-  --preview-surface: var(--preview-backdrop, var(--stage));
+.view-area:has(#preview-panel:not([hidden]))::before {
+  --preview-surface: #f4f4f4;
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.view-area[data-light-backdrop]:has(#preview-panel:not([hidden]))::before { opacity: 1; }
+
+.preview-paper-fade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .view-area:has(#preview-panel:not([hidden]))::before { transition: opacity var(--preview-fade-time) ease-out; }
+  .preview-paper-fade { animation: preview-paper-fade var(--preview-fade-time) linear both; }
+}
+
+@keyframes preview-paper-fade {
+  0%, 40% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 canvas {
